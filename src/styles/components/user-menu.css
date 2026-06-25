@@ -1,0 +1,107 @@
+.user-menu {
+  position: relative;
+  min-width: 80px;
+}
+
+.user-menu__trigger {
+  display: inline-flex !important;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 10px 16px !important;
+  font-size: 13px !important;
+  max-width: 220px;
+}
+
+.user-menu__trigger--open {
+  border-color: var(--color-accent-border);
+  background: var(--gradient-accent-subtle);
+}
+
+.user-menu__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-menu__chevron {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  transition: transform var(--transition-fast);
+}
+
+.user-menu__trigger--open .user-menu__chevron {
+  transform: rotate(180deg);
+}
+
+.user-menu__dropdown {
+  position: absolute;
+  top: calc(100% + var(--space-sm));
+  right: 0;
+  min-width: 180px;
+  padding: var(--space-sm);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: user-menu-drop 0.15s ease-out;
+}
+
+@keyframes user-menu-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.user-menu__item {
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.user-menu__item:hover {
+  background: var(--color-bg-hover);
+}
+
+.user-menu__item--danger {
+  color: var(--color-error-text);
+}
+
+.user-menu__item--danger:hover {
+  background: var(--color-error-bg);
+}
+
+@media (max-width: 768px) {
+  .user-menu {
+    order: 3;
+    width: 100%;
+  }
+
+  .user-menu__trigger {
+    width: 100%;
+    justify-content: space-between;
+    max-width: none;
+  }
+
+  .user-menu__dropdown {
+    left: 0;
+    right: 0;
+  }
+}

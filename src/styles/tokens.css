@@ -1,0 +1,110 @@
+:root,
+[data-theme="dark"] {
+  /* Backgrounds — deep gray, never pure black */
+  --color-bg-primary: #121214;
+  --color-bg-secondary: #1a1a1e;
+  --color-bg-elevated: #222228;
+  --color-bg-overlay: rgba(18, 18, 20, 0.85);
+  --color-bg-hover: rgba(255, 255, 255, 0.06);
+  --color-bg-input: rgba(255, 255, 255, 0.04);
+
+  /* Accent gradient — orange to yellow, premium glow */
+  --gradient-accent: linear-gradient(135deg, #ff5e3a 0%, #ffb900 100%);
+  --gradient-accent-hover: linear-gradient(135deg, #ff704f 0%, #ffc520 100%);
+  --gradient-accent-subtle: linear-gradient(
+    135deg,
+    rgba(255, 94, 58, 0.15) 0%,
+    rgba(255, 185, 0, 0.1) 100%
+  );
+
+  --color-accent-orange: #ff5e3a;
+  --color-accent-yellow: #ffb900;
+  --color-accent-border: rgba(255, 94, 58, 0.35);
+
+  /* Text hierarchy */
+  --color-text-primary: #f0f0f2;
+  --color-text-secondary: #a0a0a8;
+  --color-text-muted: #6a6a72;
+
+  /* Borders & shadows */
+  --color-border: rgba(255, 255, 255, 0.06);
+  --color-border-hover: rgba(255, 255, 255, 0.12);
+  --shadow-soft: 0 4px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --shadow-glow: 0 0 32px rgba(255, 94, 58, 0.2);
+
+  /* Semantic */
+  --color-error-text: #ff8080;
+  --color-error-bg: rgba(255, 60, 60, 0.1);
+  --color-error-border: rgba(255, 60, 60, 0.25);
+  --color-selection-bg: rgba(255, 94, 58, 0.35);
+  --color-spinner-track: rgba(255, 255, 255, 0.15);
+  --color-landing-glow: rgba(255, 94, 58, 0.06);
+  --color-code-bg: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="light"] {
+  --color-bg-primary: #f0f0f4;
+  --color-bg-secondary: #ffffff;
+  --color-bg-elevated: #ffffff;
+  --color-bg-overlay: rgba(240, 240, 244, 0.88);
+  --color-bg-hover: rgba(0, 0, 0, 0.05);
+  --color-bg-input: rgba(0, 0, 0, 0.04);
+
+  --gradient-accent-subtle: linear-gradient(
+    135deg,
+    rgba(255, 94, 58, 0.12) 0%,
+    rgba(255, 185, 0, 0.08) 100%
+  );
+
+  --color-text-primary: #1a1a1e;
+  --color-text-secondary: #5c5c66;
+  --color-text-muted: #8a8a96;
+
+  --color-border: rgba(0, 0, 0, 0.08);
+  --color-border-hover: rgba(0, 0, 0, 0.14);
+  --shadow-soft: 0 4px 24px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.12);
+  --shadow-glow: 0 0 32px rgba(255, 94, 58, 0.15);
+
+  --color-error-text: #c62828;
+  --color-error-bg: rgba(198, 40, 40, 0.08);
+  --color-error-border: rgba(198, 40, 40, 0.22);
+  --color-selection-bg: rgba(255, 94, 58, 0.25);
+  --color-spinner-track: rgba(0, 0, 0, 0.1);
+  --color-landing-glow: rgba(255, 94, 58, 0.08);
+  --color-code-bg: rgba(0, 0, 0, 0.06);
+}
+
+:root {
+  /* Pill geometry */
+  --radius-pill: 9999px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-container: 20px;
+  --radius-card: 16px;
+
+  /* Spacing */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+  --space-3xl: 64px;
+
+  /* Typography */
+  --font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-weight-light: 300;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* Motion */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
+}

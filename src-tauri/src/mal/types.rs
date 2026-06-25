@@ -1,0 +1,149 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnimeNode {
+    pub id: u64,
+    pub title: String,
+    #[serde(default)]
+    pub main_picture: Option<Picture>,
+    #[serde(default)]
+    pub alternative_titles: Option<AlternativeTitles>,
+    #[serde(default)]
+    pub mean: Option<f64>,
+    #[serde(default)]
+    pub rank: Option<u32>,
+    #[serde(default)]
+    pub popularity: Option<u32>,
+    #[serde(default)]
+    pub num_episodes: Option<u32>,
+    #[serde(default)]
+    pub media_type: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub synopsis: Option<String>,
+    #[serde(default)]
+    pub start_date: Option<String>,
+    #[serde(default)]
+    pub end_date: Option<String>,
+    #[serde(default)]
+    pub genres: Option<Vec<Genre>>,
+    #[serde(default)]
+    pub my_list_status: Option<MyListStatus>,
+    #[serde(default)]
+    pub num_list_users: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Picture {
+    pub medium: Option<String>,
+    pub large: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlternativeTitles {
+    pub en: Option<String>,
+    pub ja: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Genre {
+    pub id: u64,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MyListStatus {
+    pub status: Option<String>,
+    pub score: Option<u8>,
+    pub num_episodes_watched: Option<u32>,
+    #[serde(default)]
+    pub is_rewatching: Option<bool>,
+    #[serde(default)]
+    pub start_date: Option<String>,
+    #[serde(default)]
+    pub finish_date: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnimeListEntry {
+    pub node: AnimeNode,
+    pub list_status: Option<MyListStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Paging {
+    pub previous: Option<String>,
+    pub next: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnimeListResponse {
+    pub data: Vec<AnimeListEntry>,
+    pub paging: Option<Paging>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnimeSearchResponse {
+    pub data: Vec<AnimeSearchNode>,
+    pub paging: Option<Paging>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnimeSearchNode {
+    pub node: AnimeNode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnimeStatistics {
+    pub num_items_watching: Option<u32>,
+    pub num_items_completed: Option<u32>,
+    pub num_items_on_hold: Option<u32>,
+    pub num_items_dropped: Option<u32>,
+    pub num_items_plan_to_watch: Option<u32>,
+    pub num_items: Option<u32>,
+    pub num_days: Option<f64>,
+    pub num_episodes: Option<u32>,
+    pub mean_score: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserProfile {
+    pub id: u64,
+    pub name: String,
+    #[serde(default)]
+    pub picture: Option<String>,
+    #[serde(default)]
+    pub anime_statistics: Option<AnimeStatistics>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateListStatusRequest {
+    pub status: Option<String>,
+    pub score: Option<u8>,
+    pub num_watched_episodes: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchAnimeParams {
+    pub query: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+    pub genres: Option<String>,
+    pub media_type: Option<String>,
+    pub status: Option<String>,
+    pub sort: Option<String>,
+    pub order: Option<String>,
+    pub min_score: Option<u8>,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+}
+
+pub const ANIME_FIELDS: &str = "id,title,main_picture,alternative_titles,start_date,end_date,synopsis,mean,rank,popularity,num_list_users,media_type,status,genres,my_list_status,num_episodes";
+
+pub const ANIME_CARD_FIELDS: &str =
+    "id,title,main_picture,mean,rank,media_type,status,num_episodes,start_date,genres";
+
+pub const LIST_NODE_FIELDS: &str = "list_status{status,score,num_episodes_watched,is_rewatching,start_date,finish_date},genres,num_episodes,main_picture,mean,media_type,status,start_date,synopsis,rank,popularity";
+
+pub const USER_FIELDS: &str = "anime_statistics{num_items_watching,num_items_completed,num_items_on_hold,num_items_dropped,num_items_plan_to_watch,num_items,num_days,num_episodes,mean_score}";

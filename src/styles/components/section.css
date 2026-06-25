@@ -1,0 +1,17 @@
+.section-header {
+  margin-bottom: var(--space-lg);
+}
+
+.section-header__title {
+  font-size: 22px;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  letter-spacing: -0.01em;
+}
+
+.section-header__subtitle {
+  margin-top: var(--space-xs);
+  font-size: 14px;
+  font-weight: var(--font-weight-light);
+  color: var(--color-text-secondary);
+}

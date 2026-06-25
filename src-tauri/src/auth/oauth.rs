@@ -1,0 +1,430 @@
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::time::Duration;
+
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter};
+use thiserror::Error;
+use url::Url;
+
+use super::config::{default_redirect_uri, mal_client_id, PendingOAuth};
+use super::pkce::{generate_pkce_pair, PkcePair};
+
+const MAL_AUTH_URL: &str = "https://myanimelist.net/v1/oauth2/authorize";
+const MAL_TOKEN_URL: &str = "https://myanimelist.net/v1/oauth2/token";
+const SESSION_FILE: &str = "session.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthSession {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_in: u64,
+    pub token_type: String,
+    #[serde(default)]
+    pub obtained_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct TokenResponse {
+    access_token: String,
+    refresh_token: String,
+    expires_in: u64,
+    token_type: String,
+}
+
+#[derive(Error, Debug)]
+pub enum AuthError {
+    #[error("MAL client ID not configured. Set VITE_MAL_CLIENT_ID in .env")]
+    MissingClientId,
+    #[error("not authenticated")]
+    NotAuthenticated,
+    #[error("OAuth flow cancelled or timed out")]
+    FlowCancelled,
+    #[error("invalid redirect URI received")]
+    InvalidRedirect,
+    #[error("no pending OAuth session")]
+    NoPendingOAuth,
+    #[error("OAuth state mismatch")]
+    StateMismatch,
+    #[error("token exchange failed: {0}")]
+    TokenExchange(String),
+    #[error("network error: {0}")]
+    Network(#[from] reqwest::Error),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("PKCE error: {0}")]
+    Pkce(#[from] super::pkce::PkceError),
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+}
+
+pub struct AuthManager {
+    session: Option<AuthSession>,
+    session_path: std::path::PathBuf,
+    pending_oauth: Option<PendingOAuth>,
+}
+
+impl AuthManager {
+    pub fn new() -> Self {
+        let session_path = session_storage_path().join(SESSION_FILE);
+        let session = Self::load_session(&session_path).ok();
+
+        Self {
+            session,
+            session_path,
+            pending_oauth: None,
+        }
+    }
+
+    pub fn get_session(&self) -> Option<AuthSession> {
+        self.session.clone()
+    }
+
+    pub fn has_pending_oauth(&self) -> bool {
+        self.pending_oauth.is_some()
+    }
+
+    pub fn logout(&mut self) -> Result<(), AuthError> {
+        self.session = None;
+        self.pending_oauth = None;
+        if self.session_path.exists() {
+            std::fs::remove_file(&self.session_path)?;
+        }
+        Ok(())
+    }
+
+    pub fn is_token_expired(&self) -> bool {
+        match &self.session {
+            Some(s) => {
+                let elapsed = chrono::Utc::now().timestamp() - s.obtained_at;
+                elapsed >= s.expires_in as i64 - 300
+            }
+            None => true,
+        }
+    }
+
+    pub async fn ensure_valid_token(&mut self) -> Result<String, AuthError> {
+        if self.session.is_none() {
+            return Err(AuthError::NotAuthenticated);
+        }
+        if !self.is_token_expired() {
+            return Ok(self.session.as_ref().unwrap().access_token.clone());
+        }
+        self.refresh_access_token().await
+    }
+
+    pub async fn refresh_access_token(&mut self) -> Result<String, AuthError> {
+        let refresh_token = self
+            .session
+            .as_ref()
+            .map(|s| s.refresh_token.clone())
+            .ok_or(AuthError::NotAuthenticated)?;
+
+        let client_id = mal_client_id().map_err(|_| AuthError::MissingClientId)?;
+
+        let client = Client::new();
+        let mut params = HashMap::new();
+        params.insert("client_id", client_id.as_str());
+        params.insert("grant_type", "refresh_token");
+        params.insert("refresh_token", refresh_token.as_str());
+
+        let response = client
+            .post(MAL_TOKEN_URL)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .form(&params)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(AuthError::TokenExchange(body));
+        }
+
+        let token: TokenResponse = response.json().await?;
+        let session = AuthSession {
+            access_token: token.access_token.clone(),
+            refresh_token: token.refresh_token,
+            expires_in: token.expires_in,
+            token_type: token.token_type,
+            obtained_at: chrono::Utc::now().timestamp(),
+        };
+        self.persist_session(&session)?;
+        Ok(token.access_token)
+    }
+
+    pub async fn start_oauth(&mut self, app: AppHandle) -> Result<(), AuthError> {
+        let client_id = mal_client_id().map_err(|_| AuthError::MissingClientId)?;
+        let redirect_uri = default_redirect_uri();
+        let pkce = generate_pkce_pair()?;
+        let state = generate_state();
+        let auth_url = build_auth_url(&client_id, &redirect_uri, &pkce, &state)?;
+
+        #[cfg(mobile)]
+        {
+            self.pending_oauth = Some(PendingOAuth {
+                code_verifier: pkce.verifier.clone(),
+                state: state.clone(),
+                redirect_uri: redirect_uri.clone(),
+            });
+
+            tauri_plugin_opener::open_url(&auth_url, None::<&str>)
+                .map_err(|e| AuthError::TokenExchange(e.to_string()))?;
+
+            return Ok(());
+        }
+
+        #[cfg(not(mobile))]
+        {
+            let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+            let redirect_uri_for_listener = redirect_uri.clone();
+            let state_for_listener = state.clone();
+
+            let code_handle = tokio::task::spawn_blocking(move || {
+                listen_for_callback(&redirect_uri_for_listener, &state_for_listener, ready_tx)
+            });
+
+            ready_rx
+                .recv()
+                .map_err(|_| AuthError::FlowCancelled)?;
+
+            tauri_plugin_opener::open_url(&auth_url, None::<&str>)
+                .map_err(|e| AuthError::TokenExchange(e.to_string()))?;
+
+            let code = code_handle
+                .await
+                .map_err(|e| AuthError::TokenExchange(e.to_string()))??;
+
+            let session =
+                exchange_code(&client_id, &redirect_uri, &code, &pkce.verifier).await?;
+            self.persist_session(&session)?;
+            self.pending_oauth = None;
+
+            app.emit("auth-success", &session)
+                .map_err(|e| AuthError::TokenExchange(e.to_string()))?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn complete_oauth(
+        &mut self,
+        app: AppHandle,
+        code: String,
+        state: String,
+    ) -> Result<(), AuthError> {
+        let pending = self
+            .pending_oauth
+            .take()
+            .ok_or(AuthError::NoPendingOAuth)?;
+
+        if pending.state != state {
+            self.pending_oauth = Some(pending);
+            return Err(AuthError::StateMismatch);
+        }
+
+        let client_id = mal_client_id().map_err(|_| AuthError::MissingClientId)?;
+        let session = exchange_code(
+            &client_id,
+            &pending.redirect_uri,
+            &code,
+            &pending.code_verifier,
+        )
+        .await?;
+
+        self.persist_session(&session)?;
+
+        app.emit("auth-success", &session)
+            .map_err(|e| AuthError::TokenExchange(e.to_string()))?;
+
+        Ok(())
+    }
+
+    fn persist_session(&mut self, session: &AuthSession) -> Result<(), AuthError> {
+        if let Some(parent) = self.session_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let json = serde_json::to_string_pretty(session)?;
+        std::fs::write(&self.session_path, json)?;
+        self.session = Some(session.clone());
+        Ok(())
+    }
+
+    fn load_session(path: &std::path::Path) -> Result<AuthSession, AuthError> {
+        let content = std::fs::read_to_string(path)?;
+        Ok(serde_json::from_str(&content)?)
+    }
+}
+
+fn session_storage_path() -> std::path::PathBuf {
+    #[cfg(mobile)]
+    {
+        if let Ok(app_data) = std::env::var("TAURI_ANDROID_PACKAGE") {
+            let _ = app_data;
+        }
+        dirs::data_local_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("OtakuDeck")
+    }
+    #[cfg(not(mobile))]
+    {
+        dirs::data_local_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("OtakuDeck")
+    }
+}
+
+fn generate_state() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    (0..32)
+        .map(|_| format!("{:x}", rng.gen_range(0..16)))
+        .collect()
+}
+
+fn build_auth_url(
+    client_id: &str,
+    redirect_uri: &str,
+    pkce: &PkcePair,
+    state: &str,
+) -> Result<String, AuthError> {
+    let mut url = Url::parse(MAL_AUTH_URL).map_err(|_| AuthError::InvalidRedirect)?;
+    url.query_pairs_mut()
+        .append_pair("response_type", "code")
+        .append_pair("client_id", client_id)
+        .append_pair("code_challenge", &pkce.challenge)
+        .append_pair("code_challenge_method", "plain")
+        .append_pair("state", state)
+        .append_pair("redirect_uri", redirect_uri);
+    Ok(url.to_string())
+}
+
+#[cfg(not(mobile))]
+fn listen_for_callback(
+    redirect_uri: &str,
+    expected_state: &str,
+    ready: std::sync::mpsc::Sender<()>,
+) -> Result<String, AuthError> {
+    let parsed = Url::parse(redirect_uri).map_err(|_| AuthError::InvalidRedirect)?;
+    let host = parsed.host_str().unwrap_or("127.0.0.1");
+    let port = parsed.port().unwrap_or(14568);
+    let bind_addr = format!("{host}:{port}");
+
+    let listener = TcpListener::bind(&bind_addr)?;
+    listener.set_nonblocking(false)?;
+    let _ = ready.send(());
+
+    for stream in listener.incoming() {
+        let mut stream = stream?;
+        let request = read_http_request(&mut stream)?;
+        let code = extract_query_param(&request, "code").ok_or(AuthError::InvalidRedirect)?;
+        let state = extract_query_param(&request, "state").unwrap_or_default();
+
+        if state != expected_state {
+            send_html_response(&mut stream, false);
+            return Err(AuthError::InvalidRedirect);
+        }
+
+        send_html_response(&mut stream, true);
+        return Ok(code);
+    }
+
+    Err(AuthError::FlowCancelled)
+}
+
+#[cfg(not(mobile))]
+fn read_http_request(stream: &mut TcpStream) -> Result<String, AuthError> {
+    stream.set_read_timeout(Some(Duration::from_secs(120)))?;
+    let mut buffer = [0u8; 4096];
+    let n = stream.read(&mut buffer)?;
+    Ok(String::from_utf8_lossy(&buffer[..n]).to_string())
+}
+
+fn extract_query_param_from_url(url: &str, key: &str) -> Option<String> {
+    let parsed = Url::parse(url).ok()?;
+    parsed
+        .query_pairs()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.into_owned())
+}
+
+#[cfg(not(mobile))]
+fn extract_query_param(request: &str, key: &str) -> Option<String> {
+    let first_line = request.lines().next()?;
+    let path = first_line.split_whitespace().nth(1)?;
+    if path.starts_with("otakudeck://") || path.starts_with("http") {
+        return extract_query_param_from_url(path, key);
+    }
+    let query = path.split('?').nth(1)?;
+    let params: HashMap<_, _> = url::form_urlencoded::parse(query.as_bytes())
+        .into_owned()
+        .collect();
+    params.get(key).cloned()
+}
+
+#[cfg(not(mobile))]
+fn send_html_response(stream: &mut TcpStream, success: bool) {
+    let body = oauth_result_html(success);
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let _ = stream.write_all(response.as_bytes());
+    let _ = stream.flush();
+}
+
+fn oauth_result_html(success: bool) -> &'static str {
+    if success {
+        r#"<!DOCTYPE html><html><head><meta charset="utf-8"><title>OtakuDeck</title>
+        <style>body{font-family:Inter,sans-serif;background:#121214;color:#f0f0f2;
+        display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+        .card{text-align:center;padding:48px;border-radius:20px;background:#1a1a1e;
+        border:1px solid rgba(255,255,255,.06)}h1{background:linear-gradient(135deg,#ff5e3a,#ffb900);
+        -webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px}</style></head>
+        <body><div class="card"><h1>Autenticazione riuscita!</h1>
+        <p>Puoi chiudere questa finestra e tornare a OtakuDeck.</p></div></body></html>"#
+    } else {
+        r#"<!DOCTYPE html><html><body style="background:#121214;color:#ff8080;font-family:sans-serif;
+        display:flex;align-items:center;justify-content:center;height:100vh">
+        <p>Errore di autenticazione. Riprova da OtakuDeck.</p></body></html>"#
+    }
+}
+
+async fn exchange_code(
+    client_id: &str,
+    redirect_uri: &str,
+    code: &str,
+    code_verifier: &str,
+) -> Result<AuthSession, AuthError> {
+    let client = Client::new();
+
+    let mut params = HashMap::new();
+    params.insert("client_id", client_id);
+    params.insert("grant_type", "authorization_code");
+    params.insert("code", code);
+    params.insert("redirect_uri", redirect_uri);
+    params.insert("code_verifier", code_verifier);
+
+    let response = client
+        .post(MAL_TOKEN_URL)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .form(&params)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(AuthError::TokenExchange(body));
+    }
+
+    let token: TokenResponse = response.json().await?;
+    Ok(AuthSession {
+        access_token: token.access_token,
+        refresh_token: token.refresh_token,
+        expires_in: token.expires_in,
+        token_type: token.token_type,
+        obtained_at: chrono::Utc::now().timestamp(),
+    })
+}
