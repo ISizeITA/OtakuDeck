@@ -6,12 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "prebuild:mal": "node scripts/sync-bundled-mal-client.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "tauri:android": "tauri android dev",
-    "tauri:android:build": "tauri android build",
+    "tauri:android:build": "node scripts/sync-bundled-mal-client.mjs && node scripts/patch-android-signing.mjs && node scripts/patch-android-icons.mjs && tauri android build --apk && node scripts/sign-android-apk.mjs",
     "setup": "node scripts/setup.mjs",
     "icons": "node scripts/generate-icons.mjs"
   },
@@ -23,6 +24,7 @@
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "@tauri-apps/cli": "^2.11.2",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",

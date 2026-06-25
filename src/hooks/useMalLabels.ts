@@ -1,10 +1,11 @@
 import { useCallback } from "react";
+import { getGenreLabel } from "@/i18n/genreLabels";
 import { useTranslation } from "@/context/SettingsContext";
 import type { TranslationKey } from "@/i18n/translations";
 import type { ListStatus } from "@/types/mal";
 
 export function useMalLabels() {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
 
   const listStatus = useCallback(
     (status: ListStatus) => t(`listStatus.${status}` as TranslationKey),
@@ -31,11 +32,14 @@ export function useMalLabels() {
 
   const genre = useCallback(
     (id: number, fallback?: string) => {
+      const name = fallback ?? String(id);
+      const localized = getGenreLabel(locale, id, name);
+      if (localized !== name) return localized;
       const key = `genre.${id}` as TranslationKey;
       const translated = t(key);
-      return translated === key ? (fallback ?? translated) : translated;
+      return translated === key ? name : translated;
     },
-    [t],
+    [t, locale],
   );
 
   return { listStatus, mediaType, animeStatus, season, genre };

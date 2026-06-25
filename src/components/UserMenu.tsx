@@ -4,11 +4,12 @@ import "@/styles/components/user-menu.css";
 
 interface UserMenuProps {
   username: string;
+  onProfile: () => void;
   onSettings: () => void;
   onLogout: () => void;
 }
 
-export function UserMenu({ username, onSettings, onLogout }: UserMenuProps) {
+export function UserMenu({ username, onProfile, onSettings, onLogout }: UserMenuProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -58,6 +59,17 @@ export function UserMenu({ username, onSettings, onLogout }: UserMenuProps) {
 
       {open && (
         <div className="user-menu__dropdown" role="menu">
+          <button
+            type="button"
+            className="user-menu__item"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              onProfile();
+            }}
+          >
+            {t("user.profile")}
+          </button>
           <button
             type="button"
             className="user-menu__item"

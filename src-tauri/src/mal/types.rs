@@ -32,6 +32,26 @@ pub struct AnimeNode {
     pub my_list_status: Option<MyListStatus>,
     #[serde(default)]
     pub num_list_users: Option<u32>,
+    #[serde(default)]
+    pub studios: Option<Vec<Studio>>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub broadcast: Option<Broadcast>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Studio {
+    pub id: u64,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Broadcast {
+    #[serde(default)]
+    pub day_of_the_week: Option<String>,
+    #[serde(default)]
+    pub start_time: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,7 +134,61 @@ pub struct UserProfile {
     #[serde(default)]
     pub picture: Option<String>,
     #[serde(default)]
+    pub gender: Option<String>,
+    #[serde(default)]
+    pub location: Option<String>,
+    #[serde(default)]
+    pub birthday: Option<String>,
+    #[serde(default)]
+    pub time_zone: Option<String>,
+    #[serde(default)]
+    pub about: Option<String>,
+    #[serde(default)]
     pub anime_statistics: Option<AnimeStatistics>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateUserProfileRequest {
+    pub gender: Option<String>,
+    pub location: Option<String>,
+    pub birthday: Option<String>,
+    pub time_zone: Option<String>,
+    pub about: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiringCalendarEntry {
+    pub anime_id: u64,
+    pub title: String,
+    #[serde(default)]
+    pub main_picture: Option<Picture>,
+    #[serde(default)]
+    pub num_episodes: Option<u32>,
+    #[serde(default)]
+    pub num_episodes_watched: Option<u32>,
+    pub broadcast_day: String,
+    #[serde(default)]
+    pub broadcast_time: Option<String>,
+    #[serde(default)]
+    pub next_episode: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnimelistLoadProgress {
+    pub loaded: u32,
+    #[serde(default)]
+    pub total: Option<u32>,
+    #[serde(default)]
+    pub done: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiResponse<T> {
+    pub data: T,
+    #[serde(default)]
+    pub from_cache: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_expires_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,13 +211,20 @@ pub struct SearchAnimeParams {
     pub min_score: Option<u8>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
+    pub exclude_genres: Option<String>,
+    pub min_episodes: Option<u32>,
+    pub max_episodes: Option<u32>,
 }
 
-pub const ANIME_FIELDS: &str = "id,title,main_picture,alternative_titles,start_date,end_date,synopsis,mean,rank,popularity,num_list_users,media_type,status,genres,my_list_status,num_episodes";
+pub const ANIME_FIELDS: &str = "id,title,main_picture,alternative_titles,start_date,end_date,synopsis,mean,rank,popularity,num_list_users,media_type,status,genres,my_list_status,num_episodes,studios,source,broadcast{day_of_the_week,start_time}";
+
+pub const HOME_CARD_FIELDS: &str =
+    "id,title,main_picture,mean,media_type,status,num_episodes,start_date";
 
 pub const ANIME_CARD_FIELDS: &str =
     "id,title,main_picture,mean,rank,media_type,status,num_episodes,start_date,genres";
 
-pub const LIST_NODE_FIELDS: &str = "list_status{status,score,num_episodes_watched,is_rewatching,start_date,finish_date},genres,num_episodes,main_picture,mean,media_type,status,start_date,synopsis,rank,popularity";
+pub const LIST_NODE_FIELDS: &str =
+    "list_status{status,score,num_episodes_watched,start_date},num_episodes,main_picture,mean,status,genres,alternative_titles{en}";
 
-pub const USER_FIELDS: &str = "anime_statistics{num_items_watching,num_items_completed,num_items_on_hold,num_items_dropped,num_items_plan_to_watch,num_items,num_days,num_episodes,mean_score}";
+pub const USER_FIELDS: &str = "anime_statistics{num_items_watching,num_items_completed,num_items_on_hold,num_items_dropped,num_items_plan_to_watch,num_items,num_days,num_episodes,mean_score},gender,location,birthday,time_zone,about";

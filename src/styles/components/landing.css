@@ -209,3 +209,12 @@
 .landing__settings-link:hover {
   color: var(--color-text-secondary);
 }
+
+@media (max-width: 768px) {
+  .landing {
+    min-height: 100dvh;
+    padding: var(--space-lg);
+    padding-top: calc(var(--space-lg) + var(--layout-inset-top));
+    padding-bottom: calc(var(--space-lg) + var(--layout-inset-bottom));
+  }
+}

@@ -107,4 +107,18 @@
   --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* System bars / notch (viewport-fit=cover) */
+  --layout-inset-top: env(safe-area-inset-top, 0px);
+  --layout-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --layout-inset-left: env(safe-area-inset-left, 0px);
+  --layout-inset-right: env(safe-area-inset-right, 0px);
+}
+
+@media (max-width: 768px) {
+  :root {
+    /* Android WebView often reports 0 — enforce minimum insets */
+    --layout-inset-top: max(env(safe-area-inset-top, 0px), 28px);
+    --layout-inset-bottom: max(env(safe-area-inset-bottom, 0px), 48px);
+  }
 }

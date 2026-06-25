@@ -20,6 +20,13 @@ import {
   saveLanguage,
   saveTheme,
 } from "@/lib/settingsStorage";
+import {
+  defaultSearchShortcut,
+  formatSearchShortcutLabel,
+  loadStoredSearchShortcut,
+  saveSearchShortcut,
+  type SearchShortcut,
+} from "@/lib/keyboardShortcut";
 
 export type Theme = "dark" | "light";
 export type LanguagePreference = "system" | Locale;
@@ -31,6 +38,10 @@ interface SettingsContextValue {
   language: LanguagePreference;
   setLanguage: (language: LanguagePreference) => void;
   locale: Locale;
+  searchShortcut: SearchShortcut;
+  setSearchShortcut: (shortcut: SearchShortcut) => void;
+  resetSearchShortcut: () => void;
+  searchShortcutLabel: string;
   t: (key: TranslationKey, vars?: Record<string, string | number>) => string;
 }
 
@@ -46,8 +57,15 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [language, setLanguageState] = useState<LanguagePreference>(() =>
     loadStoredLanguage(),
   );
+  const [searchShortcut, setSearchShortcutState] = useState<SearchShortcut>(() =>
+    loadStoredSearchShortcut(),
+  );
 
   const locale = useMemo(() => resolveLocale(language), [language]);
+  const searchShortcutLabel = useMemo(
+    () => formatSearchShortcutLabel(searchShortcut),
+    [searchShortcut],
+  );
 
   useEffect(() => {
     document.documentElement.lang = locale;
@@ -68,6 +86,17 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     saveLanguage(next);
   }, []);
 
+  const setSearchShortcut = useCallback((next: SearchShortcut) => {
+    setSearchShortcutState(next);
+    saveSearchShortcut(next);
+  }, []);
+
+  const resetSearchShortcut = useCallback(() => {
+    const next = defaultSearchShortcut();
+    setSearchShortcutState(next);
+    saveSearchShortcut(next);
+  }, []);
+
   const t = useCallback(
     (key: TranslationKey, vars?: Record<string, string | number>) =>
       translate(locale, key, vars),
@@ -82,9 +111,25 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       language,
       setLanguage,
       locale,
+      searchShortcut,
+      setSearchShortcut,
+      resetSearchShortcut,
+      searchShortcutLabel,
       t,
     }),
-    [theme, setTheme, toggleTheme, language, setLanguage, locale, t],
+    [
+      theme,
+      setTheme,
+      toggleTheme,
+      language,
+      setLanguage,
+      locale,
+      searchShortcut,
+      setSearchShortcut,
+      resetSearchShortcut,
+      searchShortcutLabel,
+      t,
+    ],
   );
 
   return (

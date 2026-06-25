@@ -1,17 +1,26 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AiringCalendarEntry,
+  AnimeListEntry,
   AnimeListResponse,
   AnimeNode,
   AnimeSearchResponse,
+  ApiResponse,
+  AppPreferences,
   ListStatus,
   SearchAnimeParams,
+  UpdateUserProfileRequest,
   UserProfile,
 } from "@/types/mal";
 import type { AuthSession } from "@/hooks/useAuth";
+import type { TranslateConfig, MyMemoryQuota } from "@/lib/api.types";
+
+export type { TranslateConfig, MyMemoryQuota, TranslateProvider } from "@/lib/api.types";
 
 export const api = {
   getSession: () => invoke<AuthSession | null>("get_auth_session"),
   logout: () => invoke<void>("logout"),
+  getPlatform: () => invoke<string>("get_platform"),
   searchAnime: (params: SearchAnimeParams) =>
     invoke<AnimeSearchResponse>("search_anime", { params }),
   getAnimeDetails: (id: number) =>
@@ -27,19 +36,41 @@ export const api = {
     season: string,
     limit?: number,
     offset?: number,
+    forceRefresh?: boolean,
   ) =>
-    invoke<AnimeSearchResponse>("get_seasonal_anime", {
+    invoke<ApiResponse<AnimeSearchResponse>>("get_seasonal_anime", {
       year,
       season,
       limit,
       offset,
+      forceRefresh,
     }),
   getUserAnimelist: (status?: ListStatus, limit?: number, offset?: number) =>
     invoke<AnimeListResponse>("get_user_animelist", { status, limit, offset }),
-  getUserProfile: () => invoke<UserProfile>("get_user_profile"),
-  getSuggestions: () => invoke<AnimeNode[]>("get_suggestions"),
-  getAiringAnime: (limit?: number, offset?: number) =>
-    invoke<AnimeSearchResponse>("get_airing_anime", { limit, offset }),
+  getUserAnimelistAll: (forceRefresh?: boolean) =>
+    invoke<ApiResponse<AnimeListEntry[]>>("get_user_animelist_all", {
+      forceRefresh,
+    }),
+  getUserProfile: () => invoke<ApiResponse<UserProfile>>("get_user_profile"),
+  updateUserProfile: (update: UpdateUserProfileRequest) =>
+    invoke<UserProfile>("update_user_profile", { update }),
+  getSuggestions: (forceRefresh?: boolean) =>
+    invoke<ApiResponse<AnimeNode[]>>("get_suggestions", { forceRefresh }),
+  getAiringAnime: (limit?: number, offset?: number, forceRefresh?: boolean) =>
+    invoke<ApiResponse<AnimeSearchResponse>>("get_airing_anime", {
+      limit,
+      offset,
+      forceRefresh,
+    }),
+  getAiringCalendar: () =>
+    invoke<ApiResponse<AiringCalendarEntry[]>>("get_airing_calendar"),
+  getContinueWatching: (forceRefresh?: boolean) =>
+    invoke<ApiResponse<AnimeListEntry[]>>("get_continue_watching", {
+      forceRefresh,
+    }),
+  getAppPreferences: () => invoke<AppPreferences>("get_app_preferences"),
+  saveAppPreferences: (prefs: AppPreferences) =>
+    invoke<void>("save_app_preferences", { prefs }),
   updateListStatus: (
     animeId: number,
     status?: string,
@@ -66,21 +97,3 @@ export const api = {
       mymemoryEmail: mymemoryEmail?.trim() || null,
     }),
 };
-
-export interface MyMemoryQuota {
-  charactersUsed: number;
-  charactersLimit: number;
-  charactersRemaining: number;
-  percentUsed: number;
-  percentRemaining: number;
-  hasEmail: boolean;
-}
-
-export type TranslateProvider = "mymemory" | "deepl" | "google";
-
-export interface TranslateConfig {
-  provider: TranslateProvider;
-  apiKey?: string | null;
-  apiUrl?: string | null;
-  mymemoryEmail?: string | null;
-}

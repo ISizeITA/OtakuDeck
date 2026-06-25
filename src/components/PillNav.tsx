@@ -2,7 +2,7 @@ import "@/styles/components/nav.css";
 import { useTranslation } from "@/context/SettingsContext";
 import type { NavTab } from "@/types/mal";
 
-const TAB_IDS: NavTab[] = ["home", "archive", "list"];
+const TAB_IDS: NavTab[] = ["home", "archive", "list", "calendar"];
 
 interface PillNavProps {
   activeTab: NavTab;

@@ -1,20 +1,29 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::client::{MalClient, MalError};
-use super::types::AnimeNode;
+use super::types::{AnimeListEntry, AnimeNode, ANIME_CARD_FIELDS};
 
 const TARGET: usize = 12;
 const MAX_SCAN: u32 = 500;
 
 pub async fn compute_suggestions(token: &str) -> Result<Vec<AnimeNode>, MalError> {
-    let user_ids = MalClient::get_all_user_anime_ids(token).await?;
-    let user_set: HashSet<u64> = user_ids.into_iter().collect();
+    let list = MalClient::fetch_all_user_animelist(token).await?;
+    compute_suggestions_from_list(token, &list).await
+}
 
-    let list = MalClient::get_user_animelist(token, None, 100, 0).await?;
+pub async fn compute_suggestions_from_list(
+    token: &str,
+    list: &[AnimeListEntry],
+) -> Result<Vec<AnimeNode>, MalError> {
+    let user_set: HashSet<u64> = list.iter().map(|entry| entry.node.id).collect();
+    let target_genre_id = top_genre_from_list(list);
+    collect_suggestions(token, &user_set, target_genre_id).await
+}
 
-    let mut genre_scores: std::collections::HashMap<u64, f64> = std::collections::HashMap::new();
+fn top_genre_from_list(list: &[AnimeListEntry]) -> Option<u64> {
+    let mut genre_scores: HashMap<u64, f64> = HashMap::new();
 
-    for entry in &list.data {
+    for entry in list {
         let score = entry
             .list_status
             .as_ref()
@@ -43,12 +52,10 @@ pub async fn compute_suggestions(token: &str) -> Result<Vec<AnimeNode>, MalError
         }
     }
 
-    let target_genre_id = genre_scores
+    genre_scores
         .into_iter()
         .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|(id, _)| id);
-
-    collect_suggestions(token, &user_set, target_genre_id).await
+        .map(|(id, _)| id)
 }
 
 async fn collect_suggestions(
@@ -60,7 +67,14 @@ async fn collect_suggestions(
     let mut offset = 0u32;
 
     while results.len() < TARGET && offset < MAX_SCAN {
-        let ranking = MalClient::get_anime_ranking(token, "bypopularity", 100, offset).await?;
+        let ranking = MalClient::get_anime_ranking_with_fields(
+            token,
+            "bypopularity",
+            100,
+            offset,
+            ANIME_CARD_FIELDS,
+        )
+        .await?;
 
         for entry in ranking.data {
             let node = entry.node;
@@ -87,6 +101,7 @@ async fn collect_suggestions(
             break;
         }
         offset += 100;
+        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
     }
 
     Ok(results)

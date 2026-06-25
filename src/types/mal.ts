@@ -34,6 +34,19 @@ export interface AnimeNode {
   genres?: Genre[];
   my_list_status?: MyListStatus;
   num_list_users?: number;
+  studios?: Studio[];
+  source?: string;
+  broadcast?: Broadcast;
+}
+
+export interface Studio {
+  id: number;
+  name: string;
+}
+
+export interface Broadcast {
+  day_of_the_week?: string;
+  start_time?: string;
 }
 
 export interface AnimeListEntry {
@@ -72,7 +85,42 @@ export interface UserProfile {
   id: number;
   name: string;
   picture?: string;
+  gender?: string;
+  location?: string;
+  birthday?: string;
+  time_zone?: string;
+  about?: string;
   anime_statistics?: AnimeStatistics;
+}
+
+export interface UpdateUserProfileRequest {
+  gender?: string;
+  location?: string;
+  birthday?: string;
+  time_zone?: string;
+  about?: string;
+}
+
+export interface AiringCalendarEntry {
+  anime_id: number;
+  title: string;
+  main_picture?: Picture;
+  num_episodes?: number;
+  num_episodes_watched?: number;
+  broadcast_day: string;
+  broadcast_time?: string;
+  next_episode?: number;
+}
+
+export interface ApiResponse<T> {
+  data: T;
+  from_cache: boolean;
+  cache_expires_at?: string | null;
+}
+
+export interface AppPreferences {
+  episode_notifications: boolean;
+  show_streaming_search_links: boolean;
 }
 
 export interface SearchAnimeParams {
@@ -87,6 +135,15 @@ export interface SearchAnimeParams {
   min_score?: number;
   start_date?: string;
   end_date?: string;
+  exclude_genres?: string;
+  min_episodes?: number;
+  max_episodes?: number;
+}
+
+export interface AnimelistLoadProgress {
+  loaded: number;
+  total?: number;
+  done?: boolean;
 }
 
 export type ListStatus =
@@ -98,7 +155,13 @@ export type ListStatus =
 
 export type ListTabFilter = "all" | ListStatus;
 
-export type NavTab = "home" | "archive" | "list";
+export type NavTab = "home" | "archive" | "list" | "calendar";
+
+export type ArchiveSort =
+  | "mean"
+  | "title"
+  | "start_date"
+  | "popularity";
 
 export const LIST_STATUS_LABELS: Record<ListStatus, string> = {
   watching: "In Visione",
@@ -117,23 +180,8 @@ export const MEDIA_TYPES = [
   { value: "special", label: "Special" },
 ] as const;
 
-export const GENRES = [
-  { id: 1, name: "Action" },
-  { id: 2, name: "Adventure" },
-  { id: 4, name: "Comedy" },
-  { id: 8, name: "Drama" },
-  { id: 10, name: "Fantasy" },
-  { id: 14, name: "Horror" },
-  { id: 22, name: "Romance" },
-  { id: 24, name: "Sci-Fi" },
-  { id: 36, name: "Slice of Life" },
-  { id: 37, name: "Sports" },
-  { id: 41, name: "Suspense" },
-  { id: 18, name: "Mecha" },
-  { id: 40, name: "Psychological" },
-  { id: 23, name: "School" },
-  { id: 27, name: "Shounen" },
-] as const;
+export { MAL_GENRES as GENRES, GENRE_BY_ID, GENRE_GROUPS } from "@/data/malGenres";
+export type { MalGenre, GenreGroupId } from "@/data/malGenres";
 
 export const STATUS_LABELS: Record<string, string> = {
   finished_airing: "Terminato",

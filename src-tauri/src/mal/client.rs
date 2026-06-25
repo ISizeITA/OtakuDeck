@@ -1,13 +1,30 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
+use once_cell::sync::Lazy;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use thiserror::Error;
+use tokio::sync::Semaphore;
 
 use super::types::*;
 use crate::auth;
 
 const MAL_API_BASE: &str = "https://api.myanimelist.net/v2";
+const ANIMELIST_PAGE_SIZE: u32 = 50;
+const ANIMELIST_PAGE_DELAY: Duration = Duration::from_millis(350);
+const MAX_RETRIES: u32 = 4;
+const MAL_MAX_CONCURRENT: usize = 2;
+
+static HTTP: Lazy<Client> = Lazy::new(|| {
+    Client::builder()
+        .timeout(Duration::from_secs(45))
+        .connect_timeout(Duration::from_secs(15))
+        .build()
+        .expect("mal http client")
+});
+
+static MAL_SEMAPHORE: Lazy<Semaphore> = Lazy::new(|| Semaphore::new(MAL_MAX_CONCURRENT));
 
 #[derive(Error, Debug)]
 pub enum MalError {
@@ -15,12 +32,58 @@ pub enum MalError {
     NotAuthenticated,
     #[error("configuration error: {0}")]
     Config(String),
-    #[error("API error ({status}): {body}")]
-    Api { status: u16, body: String },
+    #[error("{0}")]
+    Api(String),
     #[error("network error: {0}")]
     Network(#[from] reqwest::Error),
     #[error("parse error: {0}")]
     Parse(#[from] serde_json::Error),
+}
+
+impl MalError {
+    fn is_retryable(&self) -> bool {
+        match self {
+            MalError::Network(e) => e.is_timeout() || e.is_connect() || e.is_request(),
+            MalError::Api(msg) => msg.contains("(502)")
+                || msg.contains("(503)")
+                || msg.contains("(504)")
+                || msg.contains("(429)"),
+            _ => false,
+        }
+    }
+
+    fn from_api_status(status: u16, body: &str) -> Self {
+        MalError::Api(format_api_error(status, body))
+    }
+}
+
+fn format_api_error(status: u16, body: &str) -> String {
+    if matches!(status, 502 | 503 | 504) {
+        return format!(
+            "MyAnimeList non risponde (errore {status}). Riprova tra qualche secondo."
+        );
+    }
+    if status == 429 {
+        return "Troppe richieste a MyAnimeList. Attendi un momento e riprova.".to_string();
+    }
+    let trimmed = sanitize_error_body(body);
+    if trimmed.is_empty() {
+        format!("Errore API MyAnimeList ({status})")
+    } else {
+        format!("Errore API ({status}): {trimmed}")
+    }
+}
+
+fn sanitize_error_body(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.starts_with('<') {
+        return String::new();
+    }
+    if trimmed.len() > 180 {
+        format!("{}…", &trimmed[..180])
+    } else {
+        trimmed.to_string()
+    }
 }
 
 pub struct MalClient;
@@ -44,6 +107,14 @@ impl MalClient {
                     if let Some(name) = genre_id_to_name(ids[0]) {
                         query_text = Some(name.to_string());
                     }
+                }
+            }
+        }
+
+        if query_text.as_ref().map(|q| q.len()).unwrap_or(0) < 3 {
+            if let Some(ref media_type) = params.media_type {
+                if let Some(q) = search_query_for_media_type(media_type) {
+                    query_text = Some(q);
                 }
             }
         }
@@ -139,6 +210,8 @@ impl MalClient {
         let mut ranking_offset = 0u32;
         let batch_size = 100u32;
 
+        let mut has_more_pages = false;
+
         loop {
             let mut resp =
                 Self::get_anime_ranking(token, ranking_type, batch_size, ranking_offset).await?;
@@ -162,16 +235,19 @@ impl MalClient {
                 }
             }
 
-            if collected.len() >= limit || !has_next {
+            if collected.len() >= limit {
+                has_more_pages = has_next;
+                break;
+            }
+            if !has_next {
                 break;
             }
             ranking_offset += batch_size;
         }
 
-        let has_more = collected.len() >= limit;
         Ok(AnimeSearchResponse {
             data: collected,
-            paging: if has_more {
+            paging: if has_more_pages {
                 Some(Paging {
                     previous: None,
                     next: Some("more".to_string()),
@@ -197,7 +273,23 @@ impl MalClient {
             ("ranking_type", ranking_type.to_string()),
             ("limit", limit.to_string()),
             ("offset", offset.to_string()),
-            ("fields", ANIME_CARD_FIELDS.to_string()),
+            ("fields", HOME_CARD_FIELDS.to_string()),
+        ];
+        Self::get(token, "/anime/ranking", &query).await
+    }
+
+    pub async fn get_anime_ranking_with_fields(
+        token: &str,
+        ranking_type: &str,
+        limit: u32,
+        offset: u32,
+        fields: &str,
+    ) -> Result<AnimeSearchResponse, MalError> {
+        let query = [
+            ("ranking_type", ranking_type.to_string()),
+            ("limit", limit.to_string()),
+            ("offset", offset.to_string()),
+            ("fields", fields.to_string()),
         ];
         Self::get(token, "/anime/ranking", &query).await
     }
@@ -212,7 +304,7 @@ impl MalClient {
         let query = [
             ("limit", limit.to_string()),
             ("offset", offset.to_string()),
-            ("fields", ANIME_CARD_FIELDS.to_string()),
+            ("fields", HOME_CARD_FIELDS.to_string()),
         ];
         Self::get(
             token,
@@ -244,6 +336,48 @@ impl MalClient {
         Self::get(token, "/users/@me", &query).await
     }
 
+    pub async fn update_user_profile(
+        token: &str,
+        update: &UpdateUserProfileRequest,
+    ) -> Result<UserProfile, MalError> {
+        let mut form: HashMap<&str, String> = HashMap::new();
+        if let Some(g) = &update.gender {
+            form.insert("gender", g.clone());
+        }
+        if let Some(l) = &update.location {
+            form.insert("location", l.clone());
+        }
+        if let Some(b) = &update.birthday {
+            form.insert("birthday", b.clone());
+        }
+        if let Some(tz) = &update.time_zone {
+            form.insert("time_zone", tz.clone());
+        }
+        if let Some(a) = &update.about {
+            form.insert("about", a.clone());
+        }
+
+        let client_id = auth::mal_client_id().map_err(MalError::Config)?;
+
+        let response = HTTP
+            .patch(format!("{MAL_API_BASE}/users/@me"))
+            .header("Authorization", format!("Bearer {token}"))
+            .header("X-MAL-CLIENT-ID", client_id)
+            .form(&form)
+            .query(&[("fields", USER_FIELDS.to_string())])
+            .send()
+            .await?;
+
+        let status = response.status().as_u16();
+        let body = response.text().await?;
+
+        if !((200..300).contains(&status)) {
+            return Err(MalError::from_api_status(status, &body));
+        }
+
+        serde_json::from_str(&body).map_err(MalError::Parse)
+    }
+
     pub async fn update_list_status(
         token: &str,
         anime_id: u64,
@@ -257,13 +391,12 @@ impl MalClient {
             form.insert("score", score.to_string());
         }
         if let Some(ep) = update.num_watched_episodes {
-            form.insert("num_watches_episodes", ep.to_string());
+            form.insert("num_watched_episodes", ep.to_string());
         }
 
-        let client = Client::new();
         let client_id = auth::mal_client_id().map_err(MalError::Config)?;
 
-        let response = client
+        let response = HTTP
             .put(format!("{MAL_API_BASE}/anime/{anime_id}/my_list_status"))
             .header("Authorization", format!("Bearer {token}"))
             .header("X-MAL-CLIENT-ID", client_id)
@@ -275,7 +408,7 @@ impl MalClient {
         let body = response.text().await?;
 
         if !((200..300).contains(&status)) {
-            return Err(MalError::Api { status, body });
+            return Err(MalError::from_api_status(status, &body));
         }
 
         serde_json::from_str(&body).map_err(MalError::Parse)
@@ -286,11 +419,34 @@ impl MalClient {
         path: &str,
         query: &[(&str, String)],
     ) -> Result<T, MalError> {
-        let client = Client::new();
+        let mut attempt = 0u32;
+        loop {
+            match Self::get_once::<T>(token, path, query).await {
+                Ok(value) => return Ok(value),
+                Err(err) if err.is_retryable() && attempt < MAX_RETRIES => {
+                    attempt += 1;
+                    let delay = Duration::from_millis(1200 * 2u64.pow(attempt - 1));
+                    tokio::time::sleep(delay).await;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    async fn get_once<T: DeserializeOwned>(
+        token: &str,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<T, MalError> {
+        let _permit = MAL_SEMAPHORE
+            .acquire()
+            .await
+            .map_err(|_| MalError::Api("MAL request queue closed".to_string()))?;
+
         let client_id = auth::mal_client_id().map_err(MalError::Config)?;
 
         let url = format!("{MAL_API_BASE}{path}");
-        let response = client
+        let response = HTTP
             .get(&url)
             .header("Authorization", format!("Bearer {token}"))
             .header("X-MAL-CLIENT-ID", client_id)
@@ -302,30 +458,74 @@ impl MalClient {
         let body = response.text().await?;
 
         if !((200..300).contains(&status)) {
-            return Err(MalError::Api { status, body });
+            return Err(MalError::from_api_status(status, &body));
         }
 
         serde_json::from_str(&body).map_err(MalError::Parse)
     }
 
     pub async fn get_all_user_anime_ids(token: &str) -> Result<Vec<u64>, MalError> {
-        let mut ids = Vec::new();
+        let entries = Self::fetch_all_user_animelist(token).await?;
+        Ok(entries.into_iter().map(|e| e.node.id).collect())
+    }
+
+    pub async fn fetch_all_user_animelist_with_status(
+        token: &str,
+        status: Option<&str>,
+    ) -> Result<Vec<AnimeListEntry>, MalError> {
+        let mut entries = Vec::new();
         let mut offset = 0u32;
         loop {
-            let resp = Self::get_user_animelist(token, None, 100, offset).await?;
-            for entry in &resp.data {
-                ids.push(entry.node.id);
-            }
-            if resp.paging.as_ref().and_then(|p| p.next.as_ref()).is_some() {
-                offset += 100;
-            } else {
+            let resp =
+                Self::get_user_animelist(token, status, ANIMELIST_PAGE_SIZE, offset).await?;
+            let has_next = resp
+                .paging
+                .as_ref()
+                .and_then(|p| p.next.as_ref())
+                .is_some();
+            let batch_len = resp.data.len();
+            entries.extend(resp.data);
+            if !has_next || batch_len == 0 {
                 break;
             }
-            if resp.data.is_empty() {
-                break;
-            }
+            offset += ANIMELIST_PAGE_SIZE;
+            tokio::time::sleep(ANIMELIST_PAGE_DELAY).await;
         }
-        Ok(ids)
+        Ok(entries)
+    }
+
+    pub async fn fetch_all_user_animelist_reporting<F>(
+        token: &str,
+        total_hint: Option<u32>,
+        mut on_progress: F,
+    ) -> Result<Vec<AnimeListEntry>, MalError>
+    where
+        F: FnMut(u32, Option<u32>),
+    {
+        let mut entries = Vec::new();
+        let mut offset = 0u32;
+        loop {
+            let resp =
+                Self::get_user_animelist(token, None, ANIMELIST_PAGE_SIZE, offset).await?;
+            let has_next = resp
+                .paging
+                .as_ref()
+                .and_then(|p| p.next.as_ref())
+                .is_some();
+            let batch_len = resp.data.len();
+            entries.extend(resp.data);
+            on_progress(entries.len() as u32, total_hint);
+            if !has_next || batch_len == 0 {
+                break;
+            }
+            offset += ANIMELIST_PAGE_SIZE;
+            tokio::time::sleep(ANIMELIST_PAGE_DELAY).await;
+        }
+        Ok(entries)
+    }
+
+    pub async fn fetch_all_user_animelist(token: &str) -> Result<Vec<AnimeListEntry>, MalError> {
+        Self::fetch_all_user_animelist_with_status(token, None).await
     }
 }
 
@@ -352,10 +552,26 @@ fn ranking_type_for_params(params: &SearchAnimeParams) -> &'static str {
     "all"
 }
 
+fn search_query_for_media_type(media_type: &str) -> Option<String> {
+    match media_type {
+        "ona" => Some("ona".to_string()),
+        "music" => Some("music".to_string()),
+        "movie" => Some("movie".to_string()),
+        "special" => Some("special".to_string()),
+        "ova" => Some("ova".to_string()),
+        "tv" => Some("anime".to_string()),
+        _ => None,
+    }
+}
+
 fn needs_filtered_browse(params: &SearchAnimeParams) -> bool {
     !parse_genre_ids(params.genres.as_deref().unwrap_or("")).is_empty()
+        || !parse_genre_ids(params.exclude_genres.as_deref().unwrap_or("")).is_empty()
         || params.start_date.is_some()
         || params.end_date.is_some()
+        || params.min_episodes.is_some()
+        || params.max_episodes.is_some()
+        || params.min_score.is_some()
 }
 
 fn dedupe_search_results(resp: &mut AnimeSearchResponse) {
@@ -412,6 +628,36 @@ fn apply_client_filters(resp: &mut AnimeSearchResponse, params: &SearchAnimePara
                 .unwrap_or(false)
         });
     }
+
+    if let Some(min_score) = params.min_score {
+        let min = min_score as f64;
+        resp.data.retain(|entry| entry.node.mean.unwrap_or(0.0) >= min);
+    }
+
+    if let Some(min_ep) = params.min_episodes {
+        resp.data.retain(|entry| entry.node.num_episodes.unwrap_or(0) >= min_ep);
+    }
+
+    if let Some(max_ep) = params.max_episodes {
+        resp.data.retain(|entry| {
+            let eps = entry.node.num_episodes.unwrap_or(0);
+            eps > 0 && eps <= max_ep
+        });
+    }
+
+    if let Some(ref exclude) = params.exclude_genres {
+        let ids = parse_genre_ids(exclude);
+        if !ids.is_empty() {
+            resp.data.retain(|entry| {
+                entry
+                    .node
+                    .genres
+                    .as_ref()
+                    .map(|gs| !ids.iter().any(|id| gs.iter().any(|g| g.id == *id)))
+                    .unwrap_or(true)
+            });
+        }
+    }
 }
 
 fn parse_genre_ids(genres: &str) -> Vec<u64> {
@@ -422,22 +668,89 @@ fn parse_genre_ids(genres: &str) -> Vec<u64> {
 }
 
 fn genre_id_to_name(id: u64) -> Option<&'static str> {
-    match id {
-        1 => Some("Action"),
-        2 => Some("Adventure"),
-        4 => Some("Comedy"),
-        8 => Some("Drama"),
-        10 => Some("Fantasy"),
-        14 => Some("Horror"),
-        18 => Some("Mecha"),
-        22 => Some("Romance"),
-        24 => Some("Sci-Fi"),
-        36 => Some("Slice of Life"),
-        37 => Some("Sports"),
-        40 => Some("Psychological"),
-        41 => Some("Suspense"),
-        23 => Some("School"),
-        27 => Some("Shounen"),
-        _ => None,
-    }
+    GENRE_NAMES
+        .iter()
+        .find(|(gid, _)| *gid == id)
+        .map(|(_, name)| *name)
 }
+
+const GENRE_NAMES: &[(u64, &str)] = &[
+    (1, "Action"),
+    (2, "Adventure"),
+    (3, "Racing"),
+    (4, "Comedy"),
+    (5, "Avant Garde"),
+    (6, "Mythology"),
+    (7, "Mystery"),
+    (8, "Drama"),
+    (9, "Ecchi"),
+    (10, "Fantasy"),
+    (11, "Strategy Game"),
+    (12, "Hentai"),
+    (13, "Historical"),
+    (14, "Horror"),
+    (15, "Kids"),
+    (17, "Martial Arts"),
+    (18, "Mecha"),
+    (19, "Music"),
+    (20, "Parody"),
+    (21, "Samurai"),
+    (22, "Romance"),
+    (23, "School"),
+    (24, "Sci-Fi"),
+    (25, "Shoujo"),
+    (26, "Girls Love"),
+    (27, "Shounen"),
+    (28, "Boys Love"),
+    (29, "Space"),
+    (30, "Sports"),
+    (31, "Super Power"),
+    (32, "Vampire"),
+    (35, "Harem"),
+    (36, "Slice of Life"),
+    (37, "Supernatural"),
+    (38, "Military"),
+    (39, "Detective"),
+    (40, "Psychological"),
+    (41, "Suspense"),
+    (42, "Seinen"),
+    (43, "Josei"),
+    (46, "Award Winning"),
+    (47, "Gourmet"),
+    (48, "Workplace"),
+    (49, "Erotica"),
+    (50, "Adult Cast"),
+    (51, "Anthropomorphic"),
+    (52, "CGDCT"),
+    (53, "Childcare"),
+    (54, "Combat Sports"),
+    (55, "Delinquents"),
+    (56, "Educational"),
+    (57, "Gag Humor"),
+    (58, "Gore"),
+    (59, "High Stakes Game"),
+    (60, "Idols (Female)"),
+    (61, "Idols (Male)"),
+    (62, "Isekai"),
+    (63, "Iyashikei"),
+    (64, "Love Polygon"),
+    (65, "Magical Sex Shift"),
+    (66, "Mahou Shoujo"),
+    (67, "Medical"),
+    (68, "Organized Crime"),
+    (69, "Otaku Culture"),
+    (70, "Performing Arts"),
+    (71, "Pets"),
+    (72, "Reincarnation"),
+    (73, "Reverse Harem"),
+    (74, "Love Status Quo"),
+    (75, "Showbiz"),
+    (76, "Survival"),
+    (77, "Team Sports"),
+    (78, "Time Travel"),
+    (79, "Video Game"),
+    (80, "Visual Arts"),
+    (81, "Crossdressing"),
+    (82, "Urban Fantasy"),
+    (83, "Villainess"),
+];

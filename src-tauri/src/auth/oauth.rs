@@ -1,20 +1,28 @@
 use std::collections::HashMap;
+
+#[cfg(not(mobile))]
 use std::io::{Read, Write};
+#[cfg(not(mobile))]
 use std::net::{TcpListener, TcpStream};
+#[cfg(not(mobile))]
 use std::time::Duration;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
+#[cfg(mobile)]
+use tauri_plugin_opener::OpenerExt;
 use thiserror::Error;
 use url::Url;
 
 use super::config::{default_redirect_uri, mal_client_id, PendingOAuth};
 use super::pkce::{generate_pkce_pair, PkcePair};
+use super::storage;
 
 const MAL_AUTH_URL: &str = "https://myanimelist.net/v1/oauth2/authorize";
 const MAL_TOKEN_URL: &str = "https://myanimelist.net/v1/oauth2/token";
 const SESSION_FILE: &str = "session.json";
+const PENDING_OAUTH_FILE: &str = "pending_oauth.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthSession {
@@ -48,6 +56,8 @@ pub enum AuthError {
     NoPendingOAuth,
     #[error("OAuth state mismatch")]
     StateMismatch,
+    #[error("failed to open browser: {0}")]
+    BrowserOpen(String),
     #[error("token exchange failed: {0}")]
     TokenExchange(String),
     #[error("network error: {0}")]
@@ -64,33 +74,60 @@ pub struct AuthManager {
     session: Option<AuthSession>,
     session_path: std::path::PathBuf,
     pending_oauth: Option<PendingOAuth>,
+    storage_ready: bool,
 }
 
 impl AuthManager {
     pub fn new() -> Self {
-        let session_path = session_storage_path().join(SESSION_FILE);
-        let session = Self::load_session(&session_path).ok();
-
         Self {
-            session,
-            session_path,
+            session: None,
+            session_path: std::path::PathBuf::new(),
             pending_oauth: None,
+            storage_ready: false,
         }
     }
 
-    pub fn get_session(&self) -> Option<AuthSession> {
+    fn sync_storage_paths(&mut self) {
+        let dir = storage::app_storage_dir();
+        let session_path = dir.join(SESSION_FILE);
+        if self.storage_ready && self.session_path == session_path {
+            return;
+        }
+
+        self.session_path = session_path;
+        self.storage_ready = true;
+
+        if self.session.is_none() {
+            self.session = Self::load_session(&self.session_path).ok();
+        }
+        if self.pending_oauth.is_none() {
+            #[cfg(mobile)]
+            {
+                self.pending_oauth = Self::load_pending_oauth(&dir).ok();
+            }
+        }
+    }
+
+    pub fn get_session(&mut self) -> Option<AuthSession> {
+        self.sync_storage_paths();
         self.session.clone()
     }
 
-    pub fn has_pending_oauth(&self) -> bool {
+    pub fn has_pending_oauth(&mut self) -> bool {
+        self.sync_storage_paths();
         self.pending_oauth.is_some()
     }
 
     pub fn logout(&mut self) -> Result<(), AuthError> {
+        self.sync_storage_paths();
         self.session = None;
         self.pending_oauth = None;
         if self.session_path.exists() {
             std::fs::remove_file(&self.session_path)?;
+        }
+        let pending_path = storage::app_storage_dir().join(PENDING_OAUTH_FILE);
+        if pending_path.exists() {
+            let _ = std::fs::remove_file(pending_path);
         }
         Ok(())
     }
@@ -106,6 +143,7 @@ impl AuthManager {
     }
 
     pub async fn ensure_valid_token(&mut self) -> Result<String, AuthError> {
+        self.sync_storage_paths();
         if self.session.is_none() {
             return Err(AuthError::NotAuthenticated);
         }
@@ -155,6 +193,7 @@ impl AuthManager {
     }
 
     pub async fn start_oauth(&mut self, app: AppHandle) -> Result<(), AuthError> {
+        self.sync_storage_paths();
         let client_id = mal_client_id().map_err(|_| AuthError::MissingClientId)?;
         let redirect_uri = default_redirect_uri();
         let pkce = generate_pkce_pair()?;
@@ -163,14 +202,17 @@ impl AuthManager {
 
         #[cfg(mobile)]
         {
-            self.pending_oauth = Some(PendingOAuth {
+            let pending = PendingOAuth {
                 code_verifier: pkce.verifier.clone(),
                 state: state.clone(),
                 redirect_uri: redirect_uri.clone(),
-            });
+            };
+            self.pending_oauth = Some(pending.clone());
+            self.persist_pending_oauth(&pending)?;
 
-            tauri_plugin_opener::open_url(&auth_url, None::<&str>)
-                .map_err(|e| AuthError::TokenExchange(e.to_string()))?;
+            app.opener()
+                .open_url(&auth_url, None::<&str>)
+                .map_err(|e| AuthError::BrowserOpen(e.to_string()))?;
 
             return Ok(());
         }
@@ -190,7 +232,7 @@ impl AuthManager {
                 .map_err(|_| AuthError::FlowCancelled)?;
 
             tauri_plugin_opener::open_url(&auth_url, None::<&str>)
-                .map_err(|e| AuthError::TokenExchange(e.to_string()))?;
+                .map_err(|e| AuthError::BrowserOpen(e.to_string()))?;
 
             let code = code_handle
                 .await
@@ -203,9 +245,9 @@ impl AuthManager {
 
             app.emit("auth-success", &session)
                 .map_err(|e| AuthError::TokenExchange(e.to_string()))?;
-        }
 
-        Ok(())
+            Ok(())
+        }
     }
 
     pub async fn complete_oauth(
@@ -214,9 +256,20 @@ impl AuthManager {
         code: String,
         state: String,
     ) -> Result<(), AuthError> {
+        self.sync_storage_paths();
         let pending = self
             .pending_oauth
             .take()
+            .or_else(|| {
+                #[cfg(mobile)]
+                {
+                    return Self::load_pending_oauth(&storage::app_storage_dir()).ok();
+                }
+                #[cfg(not(mobile))]
+                {
+                    None
+                }
+            })
             .ok_or(AuthError::NoPendingOAuth)?;
 
         if pending.state != state {
@@ -234,10 +287,36 @@ impl AuthManager {
         .await?;
 
         self.persist_session(&session)?;
+        #[cfg(mobile)]
+        self.clear_pending_oauth()?;
 
         app.emit("auth-success", &session)
             .map_err(|e| AuthError::TokenExchange(e.to_string()))?;
 
+        Ok(())
+    }
+
+    #[cfg(mobile)]
+    fn persist_pending_oauth(&self, pending: &PendingOAuth) -> Result<(), AuthError> {
+        let dir = storage::app_storage_dir();
+        std::fs::create_dir_all(&dir)?;
+        let json = serde_json::to_string_pretty(pending)?;
+        std::fs::write(dir.join(PENDING_OAUTH_FILE), json)?;
+        Ok(())
+    }
+
+    #[cfg(mobile)]
+    fn load_pending_oauth(dir: &std::path::Path) -> Result<PendingOAuth, AuthError> {
+        let content = std::fs::read_to_string(dir.join(PENDING_OAUTH_FILE))?;
+        Ok(serde_json::from_str(&content)?)
+    }
+
+    #[cfg(mobile)]
+    fn clear_pending_oauth(&self) -> Result<(), AuthError> {
+        let path = storage::app_storage_dir().join(PENDING_OAUTH_FILE);
+        if path.exists() {
+            std::fs::remove_file(path)?;
+        }
         Ok(())
     }
 
@@ -253,25 +332,11 @@ impl AuthManager {
 
     fn load_session(path: &std::path::Path) -> Result<AuthSession, AuthError> {
         let content = std::fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&content)?)
-    }
-}
-
-fn session_storage_path() -> std::path::PathBuf {
-    #[cfg(mobile)]
-    {
-        if let Ok(app_data) = std::env::var("TAURI_ANDROID_PACKAGE") {
-            let _ = app_data;
+        let mut session: AuthSession = serde_json::from_str(&content)?;
+        if session.obtained_at <= 0 {
+            session.obtained_at = chrono::Utc::now().timestamp();
         }
-        dirs::data_local_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("OtakuDeck")
-    }
-    #[cfg(not(mobile))]
-    {
-        dirs::data_local_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("OtakuDeck")
+        Ok(session)
     }
 }
 
@@ -341,6 +406,7 @@ fn read_http_request(stream: &mut TcpStream) -> Result<String, AuthError> {
     Ok(String::from_utf8_lossy(&buffer[..n]).to_string())
 }
 
+#[cfg(not(mobile))]
 fn extract_query_param_from_url(url: &str, key: &str) -> Option<String> {
     let parsed = Url::parse(url).ok()?;
     parsed
@@ -375,6 +441,7 @@ fn send_html_response(stream: &mut TcpStream, success: bool) {
     let _ = stream.flush();
 }
 
+#[cfg(not(mobile))]
 fn oauth_result_html(success: bool) -> &'static str {
     if success {
         r#"<!DOCTYPE html><html><head><meta charset="utf-8"><title>OtakuDeck</title>

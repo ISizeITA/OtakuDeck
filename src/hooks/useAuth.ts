@@ -140,6 +140,8 @@ export function useAuth() {
       const platform = await invoke<string>("get_platform");
       if (platform === "desktop") {
         await checkSession();
+      } else {
+        setState((prev) => ({ ...prev, isLoading: false }));
       }
     } catch (err) {
       setState((prev) => ({

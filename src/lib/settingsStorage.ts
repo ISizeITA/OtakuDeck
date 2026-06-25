@@ -26,6 +26,16 @@ export function applyThemeToDocument(theme: Theme) {
   document.documentElement.dataset.theme = theme;
 }
 
+const ONBOARDING_KEY = "otakudeck-onboarding-done";
+
+export function isOnboardingComplete(): boolean {
+  return localStorage.getItem(ONBOARDING_KEY) === "1";
+}
+
+export function markOnboardingComplete() {
+  localStorage.setItem(ONBOARDING_KEY, "1");
+}
+
 export function applyInitialSettings() {
   applyThemeToDocument(loadStoredTheme());
 }

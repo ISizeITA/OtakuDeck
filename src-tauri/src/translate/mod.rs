@@ -47,6 +47,15 @@ pub async fn translate_synopsis(
     }
 
     let cfg = get_translate_config();
+
+    if cfg.provider == PROVIDER_MYMEMORY {
+        let characters = quota::count_characters(trimmed);
+        let status = quota::get_status(cfg.mymemory_email.as_deref());
+        if characters > status.characters_remaining {
+            return Err("QUOTA_INSUFFICIENT".to_string());
+        }
+    }
+
     let translated = match config::translate_with_config(&cfg, trimmed, "en", &target).await {
         Ok(text) => text,
         Err(err) => {

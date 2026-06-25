@@ -1,12 +1,19 @@
 use tauri::{AppHandle, Emitter, State};
 
 use crate::auth::AuthSession;
-use crate::mal::suggestions::compute_suggestions;
+use crate::mal::calendar::{build_airing_calendar, continue_watching_entries};
+use crate::mal::suggestions::{compute_suggestions, compute_suggestions_from_list};
 use crate::mal::types::{
-    AnimeListResponse, AnimeNode, AnimeSearchResponse, SearchAnimeParams, UpdateListStatusRequest,
-    UserProfile,
+    AiringCalendarEntry, AnimeListEntry, AnimeListResponse, AnimeNode, AnimeSearchResponse,
+    AnimelistLoadProgress, ApiResponse, SearchAnimeParams, UpdateListStatusRequest,
+    UpdateUserProfileRequest, UserProfile,
 };
 use crate::mal::MalClient;
+use crate::notifications::sync_episode_notifications;
+use crate::preferences::{
+    get_app_preferences as load_app_preferences, save_app_preferences as persist_app_preferences,
+    AppPreferences,
+};
 use crate::AppState;
 
 async fn get_token(state: &State<'_, AppState>) -> Result<String, String> {
@@ -14,6 +21,77 @@ async fn get_token(state: &State<'_, AppState>) -> Result<String, String> {
     auth.ensure_valid_token()
         .await
         .map_err(|e| e.to_string())
+}
+
+const ANIMELIST_CACHE_TTL_SECS: i64 = 300;
+const HOME_FEED_CACHE_TTL_SECS: i64 = 300;
+
+fn cached_response<T>(
+    cache: &crate::cache::DataCache,
+    key: &str,
+    ttl_secs: i64,
+    data: T,
+) -> ApiResponse<T> {
+    ApiResponse {
+        data,
+        from_cache: true,
+        cache_expires_at: cache.cache_expires_at(key, ttl_secs),
+    }
+}
+
+fn fresh_response<T>(data: T) -> ApiResponse<T> {
+    ApiResponse {
+        data,
+        from_cache: false,
+        cache_expires_at: None,
+    }
+}
+
+async fn with_cache<T, F, Fut>(
+    state: &State<'_, AppState>,
+    key: &str,
+    ttl_secs: i64,
+    fetch: F,
+) -> Result<ApiResponse<T>, String>
+where
+    T: serde::Serialize + serde::de::DeserializeOwned + Clone,
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    match fetch().await {
+        Ok(data) => {
+            let _ = state.cache.set(key, &data);
+            Ok(fresh_response(data))
+        }
+        Err(err) => {
+            if let Some(cached) = state.cache.get::<T>(key) {
+                Ok(cached_response(&state.cache, key, ttl_secs, cached))
+            } else {
+                Err(err)
+            }
+        }
+    }
+}
+
+async fn with_cache_ttl<T, F, Fut>(
+    state: &State<'_, AppState>,
+    key: &str,
+    ttl_secs: i64,
+    force_refresh: bool,
+    fetch: F,
+) -> Result<ApiResponse<T>, String>
+where
+    T: serde::Serialize + serde::de::DeserializeOwned + Clone,
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    if !force_refresh {
+        if let Some(cached) = state.cache.get_if_fresh::<T>(key, ttl_secs) {
+            return Ok(cached_response(&state.cache, key, ttl_secs, cached));
+        }
+    }
+
+    with_cache(state, key, ttl_secs, fetch).await
 }
 
 #[tauri::command]
@@ -79,7 +157,7 @@ pub async fn start_oauth_login(
 
 #[tauri::command]
 pub async fn get_auth_session(state: State<'_, AppState>) -> Result<Option<AuthSession>, String> {
-    let auth = state.auth.lock().await;
+    let mut auth = state.auth.lock().await;
     Ok(auth.get_session())
 }
 
@@ -136,17 +214,24 @@ pub async fn get_seasonal_anime(
     season: String,
     limit: Option<u32>,
     offset: Option<u32>,
-) -> Result<AnimeSearchResponse, String> {
-    let token = get_token(&state).await?;
-    MalClient::get_seasonal_anime(
-        &token,
-        year,
-        &season,
-        limit.unwrap_or(12),
-        offset.unwrap_or(0),
+    force_refresh: Option<bool>,
+) -> Result<ApiResponse<AnimeSearchResponse>, String> {
+    let limit = limit.unwrap_or(12);
+    let offset = offset.unwrap_or(0);
+    let key = format!("seasonal_{year}_{season}_{limit}_{offset}");
+    with_cache_ttl(
+        &state,
+        &key,
+        HOME_FEED_CACHE_TTL_SECS,
+        force_refresh.unwrap_or(false),
+        || async {
+            let token = get_token(&state).await?;
+            MalClient::get_seasonal_anime(&token, year, &season, limit, offset)
+                .await
+                .map_err(|e| e.to_string())
+        },
     )
     .await
-    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -160,7 +245,7 @@ pub async fn get_user_animelist(
     MalClient::get_user_animelist(
         &token,
         status.as_deref(),
-        limit.unwrap_or(100),
+        limit.unwrap_or(50),
         offset.unwrap_or(0),
     )
     .await
@@ -168,19 +253,143 @@ pub async fn get_user_animelist(
 }
 
 #[tauri::command]
-pub async fn get_user_profile(state: State<'_, AppState>) -> Result<UserProfile, String> {
+pub async fn get_user_animelist_all(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    force_refresh: Option<bool>,
+) -> Result<ApiResponse<Vec<AnimeListEntry>>, String> {
+    let force = force_refresh.unwrap_or(false);
+
+    if !force {
+        if let Some(cached) = state
+            .cache
+            .get_if_fresh::<Vec<AnimeListEntry>>("animelist_all", ANIMELIST_CACHE_TTL_SECS)
+        {
+            return Ok(cached_response(
+                &state.cache,
+                "animelist_all",
+                ANIMELIST_CACHE_TTL_SECS,
+                cached,
+            ));
+        }
+    }
+
     let token = get_token(&state).await?;
-    MalClient::get_user_profile(&token)
+
+    let total_hint = MalClient::get_user_profile(&token)
         .await
-        .map_err(|e| e.to_string())
+        .ok()
+        .and_then(|p| p.anime_statistics.and_then(|s| s.num_items));
+
+    let app_progress = app.clone();
+    let fetch_result = MalClient::fetch_all_user_animelist_reporting(
+        &token,
+        total_hint,
+        |loaded, total| {
+            let _ = app_progress.emit(
+                "animelist-load-progress",
+                AnimelistLoadProgress {
+                    loaded,
+                    total,
+                    done: false,
+                },
+            );
+        },
+    )
+    .await;
+
+    match fetch_result {
+        Ok(data) => {
+            let _ = state.cache.set("animelist_all", &data);
+            let _ = app.emit(
+                "animelist-load-progress",
+                AnimelistLoadProgress {
+                    loaded: data.len() as u32,
+                    total: total_hint,
+                    done: true,
+                },
+            );
+            Ok(fresh_response(data))
+        }
+        Err(err) => {
+            if let Some(cached) = state.cache.get::<Vec<AnimeListEntry>>("animelist_all") {
+                let _ = app.emit(
+                    "animelist-load-progress",
+                    AnimelistLoadProgress {
+                        loaded: cached.len() as u32,
+                        total: total_hint,
+                        done: true,
+                    },
+                );
+                Ok(cached_response(
+                    &state.cache,
+                    "animelist_all",
+                    ANIMELIST_CACHE_TTL_SECS,
+                    cached,
+                ))
+            } else {
+                Err(err.to_string())
+            }
+        }
+    }
+}
+
+fn invalidate_list_caches(state: &State<'_, AppState>) {
+    let _ = state.cache.delete("animelist_all");
+    let _ = state.cache.delete("continue_watching");
+    let _ = state.cache.delete("suggestions");
+    let _ = state.cache.delete("airing_calendar");
 }
 
 #[tauri::command]
-pub async fn get_suggestions(state: State<'_, AppState>) -> Result<Vec<AnimeNode>, String> {
+pub async fn get_user_profile(
+    state: State<'_, AppState>,
+) -> Result<ApiResponse<UserProfile>, String> {
+    with_cache(&state, "user_profile", ANIMELIST_CACHE_TTL_SECS, || async {
+        let token = get_token(&state).await?;
+        MalClient::get_user_profile(&token)
+            .await
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn update_user_profile(
+    state: State<'_, AppState>,
+    update: UpdateUserProfileRequest,
+) -> Result<UserProfile, String> {
     let token = get_token(&state).await?;
-    compute_suggestions(&token)
+    let profile = MalClient::update_user_profile(&token, &update)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    let _ = state.cache.set("user_profile", &profile);
+    Ok(profile)
+}
+
+#[tauri::command]
+pub async fn get_suggestions(
+    state: State<'_, AppState>,
+    force_refresh: Option<bool>,
+) -> Result<ApiResponse<Vec<AnimeNode>>, String> {
+    with_cache_ttl(
+        &state,
+        "suggestions",
+        HOME_FEED_CACHE_TTL_SECS,
+        force_refresh.unwrap_or(false),
+        || async {
+            let token = get_token(&state).await?;
+            if let Some(list) = state.cache.get::<Vec<AnimeListEntry>>("animelist_all") {
+                return compute_suggestions_from_list(&token, &list)
+                    .await
+                    .map_err(|e| e.to_string());
+            }
+            compute_suggestions(&token)
+                .await
+                .map_err(|e| e.to_string())
+        },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -210,9 +419,68 @@ pub async fn update_anime_list_status(
         num_watched_episodes: final_episodes,
     };
 
-    MalClient::update_list_status(&token, anime_id, &update)
+    let result = MalClient::update_list_status(&token, anime_id, &update)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    invalidate_list_caches(&state);
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn get_airing_calendar(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ApiResponse<Vec<AiringCalendarEntry>>, String> {
+    let response = with_cache(&state, "airing_calendar", HOME_FEED_CACHE_TTL_SECS, || async {
+        let token = get_token(&state).await?;
+        build_airing_calendar(&token)
+            .await
+            .map_err(|e| e.to_string())
+    })
+    .await?;
+
+    let prefs = load_app_preferences();
+    let _ = sync_episode_notifications(&app, &prefs, &response.data);
+
+    Ok(response)
+}
+
+#[tauri::command]
+pub async fn get_continue_watching(
+    state: State<'_, AppState>,
+    force_refresh: Option<bool>,
+) -> Result<ApiResponse<Vec<AnimeListEntry>>, String> {
+    with_cache_ttl(
+        &state,
+        "continue_watching",
+        HOME_FEED_CACHE_TTL_SECS,
+        force_refresh.unwrap_or(false),
+        || async {
+            if let Some(list) = state.cache.get::<Vec<AnimeListEntry>>("animelist_all") {
+                let watching: Vec<AnimeListEntry> = list
+                    .into_iter()
+                    .filter(|entry| {
+                        entry
+                            .list_status
+                            .as_ref()
+                            .and_then(|s| s.status.as_deref())
+                            == Some("watching")
+                    })
+                    .collect();
+                return Ok(continue_watching_entries(watching));
+            }
+
+            let token = get_token(&state).await?;
+            let watching =
+                MalClient::fetch_all_user_animelist_with_status(&token, Some("watching"))
+                    .await
+                    .map_err(|e| e.to_string())?;
+            Ok(continue_watching_entries(watching))
+        },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -220,16 +488,34 @@ pub async fn get_airing_anime(
     state: State<'_, AppState>,
     limit: Option<u32>,
     offset: Option<u32>,
-) -> Result<AnimeSearchResponse, String> {
-    let token = get_token(&state).await?;
-    MalClient::get_anime_ranking(
-        &token,
-        "airing",
-        limit.unwrap_or(24),
-        offset.unwrap_or(0),
+    force_refresh: Option<bool>,
+) -> Result<ApiResponse<AnimeSearchResponse>, String> {
+    let limit = limit.unwrap_or(12);
+    let offset = offset.unwrap_or(0);
+    let key = format!("airing_{limit}_{offset}");
+    with_cache_ttl(
+        &state,
+        &key,
+        HOME_FEED_CACHE_TTL_SECS,
+        force_refresh.unwrap_or(false),
+        || async {
+            let token = get_token(&state).await?;
+            MalClient::get_anime_ranking(&token, "airing", limit, offset)
+                .await
+                .map_err(|e| e.to_string())
+        },
     )
     .await
-    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_app_preferences() -> AppPreferences {
+    load_app_preferences()
+}
+
+#[tauri::command]
+pub fn save_app_preferences(prefs: AppPreferences) -> Result<(), String> {
+    persist_app_preferences(&prefs)
 }
 
 #[tauri::command]

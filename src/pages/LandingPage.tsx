@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { PillButton } from "@/components/PillButton";
+import { OtakuDeckLogo } from "@/components/OtakuDeckLogo";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { useTranslation } from "@/context/SettingsContext";
 import { useAuth } from "@/hooks/useAuth";
@@ -14,20 +15,7 @@ function MalIcon() {
 }
 
 function DeckLogo() {
-  return (
-    <svg className="landing__logo-icon" viewBox="0 0 36 36" aria-hidden="true">
-      <defs>
-        <linearGradient id="accent-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#ff5e3a" />
-          <stop offset="100%" stopColor="#ffb900" />
-        </linearGradient>
-      </defs>
-      <rect x="4" y="8" width="28" height="20" rx="6" fill="url(#accent-gradient)" opacity="0.9" />
-      <rect x="8" y="12" width="8" height="12" rx="3" fill="#121214" opacity="0.6" />
-      <rect x="20" y="12" width="8" height="12" rx="3" fill="#121214" opacity="0.6" />
-      <circle cx="18" cy="6" r="3" fill="url(#accent-gradient)" />
-    </svg>
-  );
+  return <OtakuDeckLogo className="landing__logo-icon" />;
 }
 
 function PublisherSetup({ onConfigured }: { onConfigured: () => void }) {

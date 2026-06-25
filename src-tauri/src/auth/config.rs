@@ -50,10 +50,7 @@ fn project_mal_config_path() -> PathBuf {
 }
 
 fn app_mal_config_path() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("OtakuDeck")
-        .join("mal.config.json")
+    super::storage::app_storage_dir().join("mal.config.json")
 }
 
 fn read_client_id_from_file(path: &Path) -> Option<String> {

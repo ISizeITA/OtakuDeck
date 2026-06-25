@@ -3,6 +3,13 @@ import { PillButton } from "@/components/PillButton";
 import { useSettings, useTranslation } from "@/context/SettingsContext";
 import { useMalLabels } from "@/hooks/useMalLabels";
 import { api } from "@/lib/api";
+import {
+  malAnimeUrl,
+  animeSaturnSearchUrl,
+  animeUnitySearchUrl,
+  getAnimeSearchTitle,
+} from "@/lib/externalLinks";
+import { openExternal } from "@/lib/openExternal";
 import "@/styles/components/modal.css";
 import { getCoverUrl, type AnimeNode, type ListStatus } from "@/types/mal";
 
@@ -38,6 +45,7 @@ export function AnimeModal({ animeId, preview, onClose, onSaved }: AnimeModalPro
   const [status, setStatus] = useState<ListStatus>("plan_to_watch");
   const [score, setScore] = useState(0);
   const [episodesWatched, setEpisodesWatched] = useState(0);
+  const [showStreamingLinks, setShowStreamingLinks] = useState(false);
 
   const statusOptions = useMemo(
     () => STATUS_VALUES.map((value) => ({ value, label: listStatus(value) })),
@@ -46,8 +54,12 @@ export function AnimeModal({ animeId, preview, onClose, onSaved }: AnimeModalPro
 
   useEffect(() => {
     let cancelled = false;
+    setAnime(preview);
     setLoading(true);
     setError(null);
+    setStatus("plan_to_watch");
+    setScore(0);
+    setEpisodesWatched(0);
 
     api
       .getAnimeDetails(animeId)
@@ -70,7 +82,14 @@ export function AnimeModal({ animeId, preview, onClose, onSaved }: AnimeModalPro
     return () => {
       cancelled = true;
     };
-  }, [animeId]);
+  }, [animeId, preview]);
+
+  useEffect(() => {
+    api
+      .getAppPreferences()
+      .then((prefs) => setShowStreamingLinks(prefs.show_streaming_search_links))
+      .catch(() => setShowStreamingLinks(false));
+  }, []);
 
   useEffect(() => {
     setShowOriginal(true);
@@ -101,8 +120,13 @@ export function AnimeModal({ animeId, preview, onClose, onSaved }: AnimeModalPro
       const result = await api.translateSynopsis(animeId, synopsis, locale);
       setTranslatedSynopsis(result);
       setShowOriginal(false);
-    } catch {
-      setTranslateError(t("modal.translateError"));
+    } catch (err) {
+      const msg = String(err);
+      setTranslateError(
+        msg.includes("QUOTA_INSUFFICIENT")
+          ? t("modal.translateQuotaError")
+          : t("modal.translateError"),
+      );
     } finally {
       setTranslating(false);
     }
@@ -148,6 +172,11 @@ export function AnimeModal({ animeId, preview, onClose, onSaved }: AnimeModalPro
   };
 
   const display = anime;
+  const sourceLabel = (source: string) => {
+    const key = `source.${source}` as const;
+    const translated = t(key as "modal.source");
+    return translated === key ? source.replace(/_/g, " ") : translated;
+  };
   const synopsisText =
     !showOriginal && translatedSynopsis ? translatedSynopsis : display?.synopsis;
 
@@ -215,6 +244,49 @@ export function AnimeModal({ animeId, preview, onClose, onSaved }: AnimeModalPro
                 </div>
               )}
 
+              <div className="modal__links">
+                <button
+                  type="button"
+                  className="modal__link-btn"
+                  onClick={() => void openExternal(malAnimeUrl(display.id))}
+                >
+                  {t("modal.openMal")}
+                </button>
+                {showStreamingLinks && (
+                  <>
+                    <button
+                      type="button"
+                      className="modal__link-btn modal__link-btn--secondary"
+                      title={t("modal.streamingSearchDisclaimer")}
+                      onClick={() =>
+                        void openExternal(
+                          animeSaturnSearchUrl(getAnimeSearchTitle(display)),
+                        )
+                      }
+                    >
+                      {t("modal.searchSaturn")}
+                    </button>
+                    <button
+                      type="button"
+                      className="modal__link-btn modal__link-btn--secondary"
+                      title={t("modal.streamingSearchDisclaimer")}
+                      onClick={() =>
+                        void openExternal(
+                          animeUnitySearchUrl(getAnimeSearchTitle(display)),
+                        )
+                      }
+                    >
+                      {t("modal.searchUnity")}
+                    </button>
+                  </>
+                )}
+              </div>
+              {showStreamingLinks && (
+                <p className="modal__links-disclaimer">
+                  {t("modal.streamingSearchDisclaimer")}
+                </p>
+              )}
+
               <div className="modal__scores">
                 {display.mean !== undefined && display.mean > 0 && (
                   <div className="modal__score-block">
@@ -248,6 +320,27 @@ export function AnimeModal({ animeId, preview, onClose, onSaved }: AnimeModalPro
                   </span>
                 )}
               </div>
+
+              {(display.studios?.length || display.source) && (
+                <div className="modal__production">
+                  {display.studios && display.studios.length > 0 && (
+                    <p>
+                      <span className="modal__production-label">
+                        {t("modal.studios")}
+                      </span>
+                      {display.studios.map((s) => s.name).join(", ")}
+                    </p>
+                  )}
+                  {display.source && (
+                    <p>
+                      <span className="modal__production-label">
+                        {t("modal.source")}
+                      </span>
+                      {sourceLabel(display.source)}
+                    </p>
+                  )}
+                </div>
+              )}
 
               {display.synopsis && (
                 <div className="modal__synopsis-block">
