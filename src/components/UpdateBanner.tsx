@@ -5,7 +5,7 @@ import "@/styles/components/update-banner.css";
 
 export function UpdateBanner() {
   const { t } = useTranslation();
-  const { bannerVisible, updateAvailable, latestVersion, changelog, applyUpdate, dismissBanner } =
+  const { bannerVisible, updateAvailable, latestVersion, changelog, installing, applyUpdate, dismissBanner } =
     useUpdate();
 
   if (!bannerVisible || !updateAvailable) return null;
@@ -19,8 +19,13 @@ export function UpdateBanner() {
             <span className="update-banner__changelog">{changelog[0]}</span>
           )}
         </span>
-        <PillButton variant="primary" onClick={() => void applyUpdate()}>
-          {t("update.action")}
+        <PillButton
+          variant="primary"
+          loading={installing}
+          disabled={installing}
+          onClick={() => void applyUpdate()}
+        >
+          {installing ? t("update.installing") : t("update.action")}
         </PillButton>
         <button
           type="button"

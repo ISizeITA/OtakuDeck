@@ -19,6 +19,8 @@ interface UpdateContextValue {
   latestVersion: string | null;
   updateAvailable: boolean;
   checking: boolean;
+  installing: boolean;
+  installError: string | null;
   checkError: string | null;
   bannerVisible: boolean;
   changelog: string[];
@@ -34,9 +36,10 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
-  const [releaseUrl, setReleaseUrl] = useState<string | null>(null);
   const [changelog, setChangelog] = useState<string[]>([]);
   const [checking, setChecking] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
   const [bannerVisible, setBannerVisible] = useState(false);
   const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -71,7 +74,6 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
       setLatestVersion(result.latest_version);
       setUpdateAvailable(result.update_available);
       setDownloadUrl(result.download_url ?? null);
-      setReleaseUrl(result.release_url ?? null);
       setChangelog(result.changelog ?? []);
       setCheckError(result.error ?? null);
 
@@ -99,11 +101,21 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
   }, [applyResult]);
 
   const applyUpdate = useCallback(async () => {
-    const target = downloadUrl ?? releaseUrl;
-    if (!target) return;
+    if (!downloadUrl) {
+      setInstallError("Missing download URL");
+      return;
+    }
     dismissBanner();
-    await api.installAppUpdate(target);
-  }, [downloadUrl, releaseUrl, dismissBanner]);
+    setInstalling(true);
+    setInstallError(null);
+    try {
+      await api.installAppUpdate(downloadUrl);
+    } catch (err) {
+      setInstallError(String(err));
+    } finally {
+      setInstalling(false);
+    }
+  }, [downloadUrl, dismissBanner]);
 
   useEffect(() => {
     void api.getAppVersion().then(setCurrentVersion).catch(() => {});
@@ -119,6 +131,8 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
       latestVersion,
       updateAvailable,
       checking,
+      installing,
+      installError,
       checkError,
       bannerVisible,
       changelog,
@@ -131,6 +145,8 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
       latestVersion,
       updateAvailable,
       checking,
+      installing,
+      installError,
       checkError,
       bannerVisible,
       changelog,

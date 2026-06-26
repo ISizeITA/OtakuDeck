@@ -630,43 +630,7 @@ pub async fn check_for_updates(
 
 #[tauri::command]
 pub async fn install_app_update(app: AppHandle, url: String) -> Result<(), String> {
-    use tauri_plugin_opener::OpenerExt;
-
-    #[cfg(mobile)]
-    {
-        let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-        let update_dir = dir.join("updates");
-        std::fs::create_dir_all(&update_dir).map_err(|e| e.to_string())?;
-        let path = update_dir.join("OtakuDeck-update.apk");
-
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
-            .build()
-            .map_err(|e| e.to_string())?;
-
-        let bytes = client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .bytes()
-            .await
-            .map_err(|e| e.to_string())?;
-
-        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
-        app.opener()
-            .open_path(path.to_string_lossy(), None::<&str>)
-            .map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-
-    #[cfg(not(mobile))]
-    {
-        app.opener()
-            .open_url(url, None::<&str>)
-            .map_err(|e| e.to_string())?;
-        Ok(())
-    }
+    crate::updates::save_and_install_update(&app, &url).await
 }
 
 #[tauri::command]

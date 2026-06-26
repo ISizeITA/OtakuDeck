@@ -213,6 +213,8 @@ export const en = {
   "settings.updateCheckError": "Could not check for updates: {{error}}",
   "update.banner": "Update available — v{{version}}",
   "update.action": "Update",
+  "update.installing": "Installing…",
+  "settings.updateInstallError": "Could not install update: {{error}}",
   "settings.translateInfo":
     "Choose a translation provider. MyMemory works without an API key; DeepL and Google require your own API key.",
   "settings.translateProvider": "Provider",
@@ -531,6 +533,8 @@ export const it = {
   "settings.updateCheckError": "Impossibile controllare gli aggiornamenti: {{error}}",
   "update.banner": "Aggiornamento disponibile — v{{version}}",
   "update.action": "Aggiorna",
+  "update.installing": "Installazione…",
+  "settings.updateInstallError": "Impossibile installare l'aggiornamento: {{error}}",
   "settings.translateInfo":
     "Scegli un provider di traduzione. MyMemory funziona senza API key; DeepL e Google richiedono la tua chiave API.",
   "settings.translateProvider": "Provider",

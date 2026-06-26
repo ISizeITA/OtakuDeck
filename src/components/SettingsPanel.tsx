@@ -30,6 +30,8 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     latestVersion,
     updateAvailable,
     checking,
+    installing,
+    installError,
     checkError,
     changelog,
     checkForUpdates,
@@ -236,11 +238,21 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                   {t("settings.checkUpdates")}
                 </PillButton>
                 {updateAvailable && (
-                  <PillButton variant="primary" onClick={() => void applyUpdate()}>
-                    {t("update.action")}
+                  <PillButton
+                    variant="primary"
+                    loading={installing}
+                    disabled={installing}
+                    onClick={() => void applyUpdate()}
+                  >
+                    {installing ? t("update.installing") : t("update.action")}
                   </PillButton>
                 )}
               </div>
+              {installError && (
+                <p className="settings-panel__text settings-panel__text--error">
+                  {t("settings.updateInstallError", { error: installError })}
+                </p>
+              )}
               {!checking && !updateAvailable && !checkError && latestVersion && (
                 <p className="settings-panel__text settings-panel__text--muted">
                   {t("settings.upToDate")}
