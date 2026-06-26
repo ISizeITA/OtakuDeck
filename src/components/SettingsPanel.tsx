@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { FilterChips } from "@/components/FilterChips";
+import { PillButton } from "@/components/PillButton";
 import { ShortcutRecorder } from "@/components/ShortcutRecorder";
 import { TranslateSettings } from "@/components/TranslateSettings";
 import { useSettings } from "@/context/SettingsContext";
+import { useUpdate } from "@/context/UpdateContext";
 import type { LanguagePreference } from "@/context/SettingsContext";
 import { api } from "@/lib/api";
 import type { AppPreferences } from "@/types/mal";
@@ -23,6 +25,16 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     resetSearchShortcut,
     t,
   } = useSettings();
+  const {
+    currentVersion,
+    latestVersion,
+    updateAvailable,
+    checking,
+    checkError,
+    changelog,
+    checkForUpdates,
+    applyUpdate,
+  } = useUpdate();
   const [prefs, setPrefs] = useState<AppPreferences>({
     episode_notifications: false,
     show_streaming_search_links: false,
@@ -200,6 +212,59 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                   <span className="theme-switch__thumb" />
                 </span>
               </button>
+            </div>
+          </section>
+
+          <section className="settings-section">
+            <h3 className="settings-section__title">{t("settings.updates")}</h3>
+            <div className="settings-row settings-row--stacked">
+              <div className="settings-row__info">
+                <span className="settings-row__label">{t("settings.currentVersion")}</span>
+                <span className="settings-row__hint">
+                  {currentVersion || "—"}
+                  {updateAvailable && latestVersion
+                    ? ` → ${latestVersion}`
+                    : ""}
+                </span>
+              </div>
+              <div className="settings-update-actions">
+                <PillButton
+                  variant="secondary"
+                  loading={checking}
+                  onClick={() => void checkForUpdates()}
+                >
+                  {t("settings.checkUpdates")}
+                </PillButton>
+                {updateAvailable && (
+                  <PillButton variant="primary" onClick={() => void applyUpdate()}>
+                    {t("update.action")}
+                  </PillButton>
+                )}
+              </div>
+              {!checking && !updateAvailable && !checkError && latestVersion && (
+                <p className="settings-panel__text settings-panel__text--muted">
+                  {t("settings.upToDate")}
+                </p>
+              )}
+              {updateAvailable && (
+                <>
+                  <p className="settings-panel__text">
+                    {t("settings.updateAvailable", { version: latestVersion ?? "" })}
+                  </p>
+                  {changelog.length > 0 && (
+                    <ul className="settings-update-changelog">
+                      {changelog.map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
+              {checkError && (
+                <p className="settings-panel__text settings-panel__text--error">
+                  {t("settings.updateCheckError", { error: checkError })}
+                </p>
+              )}
             </div>
           </section>
 

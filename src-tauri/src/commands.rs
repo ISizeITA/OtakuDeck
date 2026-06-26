@@ -1,7 +1,8 @@
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::auth::AuthSession;
-use crate::mal::calendar::{build_airing_calendar, continue_watching_entries};
+use crate::AppState;
+use crate::mal::calendar::{airing_today, build_airing_calendar, continue_watching_entries};
 use crate::mal::home_feed::build_home_feed;
 use crate::mal::suggestions::{compute_suggestions, compute_suggestions_from_list};
 use crate::mal::types::{
@@ -15,7 +16,8 @@ use crate::preferences::{
     get_app_preferences as load_app_preferences, save_app_preferences as persist_app_preferences,
     AppPreferences,
 };
-use crate::AppState;
+use crate::cover_cache;
+use crate::widget::sync_airing_widget;
 
 async fn get_token(state: &State<'_, AppState>) -> Result<String, String> {
     let mut auth = state.auth.lock().await;
@@ -401,7 +403,8 @@ pub async fn get_suggestions(
         force_refresh.unwrap_or(false),
         || async {
             let token = get_token(&state).await?;
-            if let Some(list) = state.cache.get::<Vec<AnimeListEntry>>("animelist_all") {
+            let cached_list: Option<Vec<AnimeListEntry>> = state.cache.get("animelist_all");
+            if let Some(list) = cached_list {
                 return compute_suggestions_from_list(&token, &list)
                     .await
                     .map_err(|e| e.to_string());
@@ -473,16 +476,18 @@ pub async fn get_airing_calendar(
 
     let prefs = load_app_preferences();
     let _ = sync_episode_notifications(&app, &prefs, &response.data);
+    sync_airing_widget(&app, &airing_today(&response.data));
 
     Ok(response)
 }
 
 #[tauri::command]
 pub async fn get_home_feed(
+    app: AppHandle,
     state: State<'_, AppState>,
     force_refresh: Option<bool>,
 ) -> Result<ApiResponse<HomeFeed>, String> {
-    with_cache_ttl(
+    let response = with_cache_ttl(
         &state,
         "home_feed",
         HOME_FEED_CACHE_TTL_SECS,
@@ -502,7 +507,10 @@ pub async fn get_home_feed(
                 .map_err(|e| e.to_string())
         },
     )
-    .await
+    .await?;
+
+    sync_airing_widget(&app, &response.data.airing_today);
+    Ok(response)
 }
 
 #[tauri::command]
@@ -604,4 +612,70 @@ pub async fn check_translate_service() -> Result<Vec<String>, String> {
 #[tauri::command]
 pub fn get_mymemory_quota(mymemory_email: Option<String>) -> crate::translate::MyMemoryQuotaStatus {
     crate::translate::get_mymemory_quota_status(mymemory_email.as_deref())
+}
+
+#[tauri::command]
+pub fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[tauri::command]
+pub async fn check_for_updates(
+    manifest_url: Option<String>,
+) -> crate::updates::UpdateCheckResult {
+    let url = manifest_url.unwrap_or_else(|| crate::updates::DEFAULT_MANIFEST_URL.to_string());
+    let platform = if cfg!(mobile) { "mobile" } else { "desktop" };
+    crate::updates::check_updates(&url, platform).await
+}
+
+#[tauri::command]
+pub async fn install_app_update(app: AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    #[cfg(mobile)]
+    {
+        let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        let update_dir = dir.join("updates");
+        std::fs::create_dir_all(&update_dir).map_err(|e| e.to_string())?;
+        let path = update_dir.join("OtakuDeck-update.apk");
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .map_err(|e| e.to_string())?;
+
+        let bytes = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .bytes()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        app.opener()
+            .open_path(path.to_string_lossy(), None::<&str>)
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(not(mobile))]
+    {
+        app.opener()
+            .open_url(url, None::<&str>)
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub async fn cache_anime_cover(
+    app: AppHandle,
+    anime_id: u64,
+    url: String,
+) -> Result<String, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let path = cover_cache::ensure_cover_cached(&dir, anime_id, &url).await?;
+    Ok(path.to_string_lossy().to_string())
 }

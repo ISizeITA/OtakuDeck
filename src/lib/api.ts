@@ -15,6 +15,7 @@ import type {
 } from "@/types/mal";
 import type { AuthSession } from "@/hooks/useAuth";
 import type { TranslateConfig, MyMemoryQuota } from "@/lib/api.types";
+import type { UpdateCheckResult } from "@/types/updates";
 
 export type { TranslateConfig, MyMemoryQuota, TranslateProvider } from "@/lib/api.types";
 
@@ -101,4 +102,9 @@ export const api = {
     invoke<MyMemoryQuota>("get_mymemory_quota", {
       mymemoryEmail: mymemoryEmail?.trim() || null,
     }),
+  getAppVersion: () => invoke<string>("get_app_version"),
+  checkForUpdates: () => invoke<UpdateCheckResult>("check_for_updates"),
+  installAppUpdate: (url: string) => invoke<void>("install_app_update", { url }),
+  cacheAnimeCover: (animeId: number, url: string) =>
+    invoke<string>("cache_anime_cover", { animeId, url }),
 };

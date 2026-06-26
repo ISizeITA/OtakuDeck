@@ -8,6 +8,8 @@ import { useRefresh } from "@/context/RefreshContext";
 import { useTranslation } from "@/context/SettingsContext";
 import { useMalLabels } from "@/hooks/useMalLabels";
 import { cacheExpiryFromResponse } from "@/lib/cacheExpiry";
+import { RecentSection } from "@/components/RecentSection";
+import { formatBroadcastDisplay } from "@/lib/broadcastTime";
 import { formatMalSyncTime } from "@/lib/malSync";
 import "@/styles/components/page.css";
 import {
@@ -111,6 +113,8 @@ export function HomePage() {
       )}
       {error && <p className="page__error">{error}</p>}
 
+      <RecentSection />
+
       {airingToday.length > 0 && (
         <section className="page__section">
           <SectionHeader
@@ -143,7 +147,7 @@ export function HomePage() {
                   />
                   <span className="home-airing-today__title">{entry.title}</span>
                   <span className="home-airing-today__meta">
-                    {entry.broadcast_time}
+                    {formatBroadcastDisplay(entry.broadcast_time, locale)}
                     {entry.next_episode !== undefined &&
                       ` · ${t("calendar.nextEpisode", { episode: entry.next_episode })}`}
                   </span>

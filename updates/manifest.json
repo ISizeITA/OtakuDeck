@@ -1,0 +1,19 @@
+{
+  "version": "0.1.2",
+  "released_at": "2026-06-26",
+  "release_url": "https://github.com/ISizeITA/OtakuDeck/releases/tag/v0.1.2",
+  "changelog": [
+    "Sistema aggiornamenti con banner e sezione Impostazioni",
+    "Calendario: oggi evidenziato, orari JST in locale, promemoria 30 min",
+    "Deep link condivisibile, anime recenti, scorciatoie tastiera",
+    "Cache copertine offline e widget Android in onda oggi"
+  ],
+  "platforms": {
+    "windows": {
+      "download_url": "https://github.com/ISizeITA/OtakuDeck/releases/download/v0.1.2/OtakuDeck_0.1.2_x64-setup.exe"
+    },
+    "android": {
+      "download_url": "https://github.com/ISizeITA/OtakuDeck/releases/download/v0.1.2/OtakuDeck-universal-release.apk"
+    }
+  }
+}

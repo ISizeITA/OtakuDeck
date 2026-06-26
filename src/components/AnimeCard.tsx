@@ -1,5 +1,6 @@
 import "@/styles/components/anime-card.css";
-import { getCoverUrl, type AnimeNode } from "@/types/mal";
+import { CachedCover } from "@/components/CachedCover";
+import type { AnimeNode } from "@/types/mal";
 
 interface AnimeCardProps {
   anime: AnimeNode;
@@ -11,12 +12,7 @@ export function AnimeCard({ anime, onClick, subtitle }: AnimeCardProps) {
   return (
     <button type="button" className="anime-card" onClick={onClick}>
       <div className="anime-card__cover-wrap">
-        <img
-          className="anime-card__cover"
-          src={getCoverUrl(anime)}
-          alt={anime.title}
-          loading="lazy"
-        />
+        <CachedCover anime={anime} className="anime-card__cover" alt={anime.title} />
         <div className="anime-card__overlay" />
         {anime.mean !== undefined && anime.mean > 0 && (
           <span className="anime-card__score">{anime.mean.toFixed(1)}</span>

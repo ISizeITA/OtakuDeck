@@ -16,6 +16,12 @@ pub mod preferences;
 
 pub mod translate;
 
+pub mod cover_cache;
+
+pub mod widget;
+
+pub mod updates;
+
 
 
 use auth::AuthManager;
@@ -142,6 +148,14 @@ pub fn run() {
             commands::check_translate_service,
 
             commands::get_mymemory_quota,
+
+            commands::get_app_version,
+
+            commands::check_for_updates,
+
+            commands::install_app_update,
+
+            commands::cache_anime_cover,
 
         ])
 

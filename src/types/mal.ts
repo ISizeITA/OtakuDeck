@@ -133,6 +133,7 @@ export interface ApiResponse<T> {
 export interface AppPreferences {
   episode_notifications: boolean;
   show_streaming_search_links: boolean;
+  episode_reminder_minutes?: number;
 }
 
 export interface SearchAnimeParams {

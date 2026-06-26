@@ -5,12 +5,14 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { recordRecentAnime } from "@/lib/recentAnime";
 import { AnimeModal } from "@/components/AnimeModal";
 import type { AnimeNode } from "@/types/mal";
 
 interface AnimeModalContextValue {
   openAnime: (anime: AnimeNode | number) => void;
   closeAnime: () => void;
+  isOpen: boolean;
   refreshKey: number;
   triggerRefresh: () => void;
 }
@@ -27,6 +29,7 @@ export function AnimeModalProvider({ children }: { children: ReactNode }) {
       setPreview(null);
       setAnimeId(anime);
     } else {
+      recordRecentAnime(anime);
       setPreview(anime);
       setAnimeId(anime.id);
     }
@@ -43,7 +46,7 @@ export function AnimeModalProvider({ children }: { children: ReactNode }) {
 
   return (
     <AnimeModalContext.Provider
-      value={{ openAnime, closeAnime, refreshKey, triggerRefresh }}
+      value={{ openAnime, closeAnime, isOpen: animeId !== null, refreshKey, triggerRefresh }}
     >
       {children}
       {animeId !== null && (

@@ -24,6 +24,12 @@ pub struct AppPreferences {
     pub episode_notifications: bool,
     #[serde(default)]
     pub show_streaming_search_links: bool,
+    #[serde(default = "default_reminder_minutes")]
+    pub episode_reminder_minutes: u32,
+}
+
+fn default_reminder_minutes() -> u32 {
+    30
 }
 
 impl Default for AppPreferences {
@@ -31,6 +37,7 @@ impl Default for AppPreferences {
         Self {
             episode_notifications: false,
             show_streaming_search_links: false,
+            episode_reminder_minutes: 30,
         }
     }
 }

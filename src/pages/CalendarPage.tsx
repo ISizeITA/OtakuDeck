@@ -8,6 +8,7 @@ import { useRefresh } from "@/context/RefreshContext";
 import { useTranslation } from "@/context/SettingsContext";
 import { useMalLabels } from "@/hooks/useMalLabels";
 import { api } from "@/lib/api";
+import { getLocalDayKey, formatBroadcastDisplay, isBroadcastDayToday } from "@/lib/broadcastTime";
 import { cacheExpiryFromResponse } from "@/lib/cacheExpiry";
 import { formatMalSyncTime } from "@/lib/malSync";
 import "@/styles/components/calendar.css";
@@ -56,6 +57,7 @@ export function CalendarPage() {
   const [error, setError] = useState<string | null>(null);
 
   const { year, season } = getCurrentSeason();
+  const todayKey = useMemo(() => getLocalDayKey(), []);
 
   const load = useCallback(async (forceRefresh = false) => {
     setLoading(true);
@@ -209,14 +211,22 @@ export function CalendarPage() {
             <p className="calendar-empty">{t("calendar.empty")}</p>
           ) : (
             grouped.map(([day, items]) => (
-              <section key={day} className="calendar-day">
-                <h3 className="calendar-day__title">{dayLabel(day)}</h3>
+              <section
+                key={day}
+                className={`calendar-day ${day.toLowerCase() === todayKey ? "calendar-day--today" : ""}`}
+              >
+                <h3 className="calendar-day__title">
+                  {dayLabel(day)}
+                  {day.toLowerCase() === todayKey && (
+                    <span className="calendar-day__today-badge">{t("calendar.today")}</span>
+                  )}
+                </h3>
                 <ul className="calendar-day__list">
                   {items.map((entry) => (
                     <li key={entry.anime_id}>
                       <button
                         type="button"
-                        className="calendar-item"
+                        className={`calendar-item ${isBroadcastDayToday(entry.broadcast_day) ? "calendar-item--today" : ""}`}
                         onClick={() =>
                           openAnime({
                             id: entry.anime_id,
@@ -250,7 +260,9 @@ export function CalendarPage() {
                           </span>
                           <span className="calendar-item__meta">
                             {entry.broadcast_time && (
-                              <span>{entry.broadcast_time}</span>
+                              <span>
+                                {formatBroadcastDisplay(entry.broadcast_time, locale)}
+                              </span>
                             )}
                             {entry.next_episode !== undefined && (
                               <span>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_airing_title">In onda oggi</string>
+    <string name="widget_airing_empty">Apri OtakuDeck per sincronizzare il calendario.</string>
+    <string name="widget_airing_description">Anime in onda oggi dalla tua lista MAL</string>
+</resources>

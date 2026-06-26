@@ -9,8 +9,10 @@ import {
   animeUnitySearchUrl,
   getAnimeSearchTitle,
 } from "@/lib/externalLinks";
+import { copyAnimeDeepLink } from "@/lib/deepLink";
 import { openExternal } from "@/lib/openExternal";
 import "@/styles/components/modal.css";
+import { recordRecentAnime } from "@/lib/recentAnime";
 import { getCoverUrl, type AnimeNode, type ListStatus } from "@/types/mal";
 
 const STATUS_VALUES: ListStatus[] = [
@@ -46,6 +48,7 @@ export function AnimeModal({ animeId, preview, onClose, onSaved }: AnimeModalPro
   const [score, setScore] = useState(0);
   const [episodesWatched, setEpisodesWatched] = useState(0);
   const [showStreamingLinks, setShowStreamingLinks] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   const statusOptions = useMemo(
     () => STATUS_VALUES.map((value) => ({ value, label: listStatus(value) })),
@@ -66,6 +69,7 @@ export function AnimeModal({ animeId, preview, onClose, onSaved }: AnimeModalPro
       .then((data) => {
         if (cancelled) return;
         setAnime(data);
+        recordRecentAnime(data);
         const ls = data.my_list_status;
         if (ls?.status) setStatus(ls.status as ListStatus);
         if (ls?.score !== undefined) setScore(ls.score);
@@ -245,6 +249,18 @@ export function AnimeModal({ animeId, preview, onClose, onSaved }: AnimeModalPro
               )}
 
               <div className="modal__links">
+                <button
+                  type="button"
+                  className="modal__link-btn modal__link-btn--secondary"
+                  onClick={() => {
+                    void copyAnimeDeepLink(display.id).then(() => {
+                      setLinkCopied(true);
+                      window.setTimeout(() => setLinkCopied(false), 2000);
+                    });
+                  }}
+                >
+                  {linkCopied ? t("modal.linkCopied") : t("modal.copyLink")}
+                </button>
                 <button
                   type="button"
                   className="modal__link-btn"

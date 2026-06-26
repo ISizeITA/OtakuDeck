@@ -32,6 +32,12 @@
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-card {
+    animation: none;
+  }
+}
+
 .onboarding-card__logo {
   width: 56px;
   height: 56px;

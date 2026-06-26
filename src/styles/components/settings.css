@@ -389,3 +389,24 @@
     padding-bottom: calc(var(--space-2xl) + var(--layout-inset-bottom));
   }
 }
+
+.settings-update-changelog {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.settings-update-changelog li {
+  margin-bottom: 4px;
+}
+
+.settings-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.settings-panel__text--error {
+  color: var(--color-error-text);
+}
