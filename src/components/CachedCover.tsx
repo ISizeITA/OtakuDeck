@@ -35,5 +35,15 @@ export function CachedCover({ anime, className, alt = "" }: CachedCoverProps) {
     };
   }, [anime.id, remote, anime.main_picture?.large, anime.main_picture?.medium]);
 
-  return <img className={className} src={src} alt={alt} loading="lazy" />;
+  return (
+    <img
+      className={className}
+      src={src}
+      alt={alt}
+      loading="lazy"
+      onError={() => {
+        if (src !== remote) setSrc(remote);
+      }}
+    />
+  );
 }

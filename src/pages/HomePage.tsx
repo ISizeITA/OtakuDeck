@@ -9,7 +9,7 @@ import { useTranslation } from "@/context/SettingsContext";
 import { useMalLabels } from "@/hooks/useMalLabels";
 import { cacheExpiryFromResponse } from "@/lib/cacheExpiry";
 import { RecentSection } from "@/components/RecentSection";
-import { formatBroadcastDisplay } from "@/lib/broadcastTime";
+import { formatBroadcastDisplay, formatBroadcastLocal } from "@/lib/broadcastTime";
 import { formatMalSyncTime } from "@/lib/malSync";
 import "@/styles/components/page.css";
 import {
@@ -26,6 +26,18 @@ function entryToNode(entry: AnimeListEntry): AnimeNode {
     ...entry.node,
     my_list_status: entry.list_status,
   };
+}
+
+function renderAiringTime(time: string | undefined, locale: string) {
+  const localTime = formatBroadcastLocal(time);
+  if (!localTime) return formatBroadcastDisplay(time, locale);
+  const label = locale.startsWith("it") ? "ora locale" : "local";
+  return (
+    <>
+      <span className="home-airing-today__time">{localTime}</span>
+      {` (${label})`}
+    </>
+  );
 }
 
 export function HomePage() {
@@ -145,12 +157,14 @@ export function HomePage() {
                     })}
                     alt=""
                   />
-                  <span className="home-airing-today__title">{entry.title}</span>
-                  <span className="home-airing-today__meta">
-                    {formatBroadcastDisplay(entry.broadcast_time, locale)}
-                    {entry.next_episode !== undefined &&
-                      ` · ${t("calendar.nextEpisode", { episode: entry.next_episode })}`}
-                  </span>
+                  <div className="home-airing-today__body">
+                    <span className="home-airing-today__title">{entry.title}</span>
+                    <span className="home-airing-today__meta">
+                      {renderAiringTime(entry.broadcast_time, locale)}
+                      {entry.next_episode !== undefined &&
+                        ` · ${t("calendar.nextEpisode", { episode: entry.next_episode })}`}
+                    </span>
+                  </div>
                 </button>
               </li>
             ))}
