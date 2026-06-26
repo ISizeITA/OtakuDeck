@@ -1,17 +1,17 @@
 {
-  "version": "0.1.4",
+  "version": "0.1.5",
   "released_at": "2026-06-26",
-  "release_url": "https://github.com/ISizeITA/OtakuDeck/releases/tag/v0.1.4",
+  "release_url": "https://github.com/ISizeITA/OtakuDeck/releases/tag/v0.1.5",
   "changelog": [
-    "Aggiornamento automatico su Windows: scarica e installa senza aprire GitHub",
-    "Indicatore Installazione… durante il download dell'update"
+    "Release di prova per test aggiornamento automatico",
+    "Nessuna novità funzionale — solo verifica installazione da v0.1.4"
   ],
   "platforms": {
     "windows": {
-      "download_url": "https://github.com/ISizeITA/OtakuDeck/releases/download/v0.1.4/OtakuDeck_0.1.4_x64-setup.exe"
+      "download_url": "https://github.com/ISizeITA/OtakuDeck/releases/download/v0.1.5/OtakuDeck_0.1.5_x64-setup.exe"
     },
     "android": {
-      "download_url": "https://github.com/ISizeITA/OtakuDeck/releases/download/v0.1.4/OtakuDeck-universal-release.apk"
+      "download_url": "https://github.com/ISizeITA/OtakuDeck/releases/download/v0.1.5/OtakuDeck-universal-release.apk"
     }
   }
 }
