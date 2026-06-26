@@ -1,12 +1,18 @@
 import { useEffect } from "react";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
-import { parseAnimeDeepLink } from "@/lib/deepLink";
-import { enqueuePendingAnimeId } from "@/lib/pendingDeepLink";
+import { parseAnimeDeepLink, parseNavDeepLink } from "@/lib/deepLink";
+import { enqueuePendingAnimeId, enqueuePendingNav } from "@/lib/pendingDeepLink";
 
-/** Captures anime deep links at app root (works before login). */
+/** Captures deep links at app root (works before login). */
 export function useDeepLinkCapture() {
   useEffect(() => {
     function handleUrl(url: string) {
+      const navTab = parseNavDeepLink(url);
+      if (navTab !== null) {
+        enqueuePendingNav(navTab);
+        return;
+      }
+
       const animeId = parseAnimeDeepLink(url);
       if (animeId !== null) {
         enqueuePendingAnimeId(animeId);

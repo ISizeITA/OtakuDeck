@@ -5,7 +5,8 @@ const LANGUAGE_KEY = "otakudeck-language";
 
 export function loadStoredTheme(): Theme {
   const stored = localStorage.getItem(THEME_KEY);
-  return stored === "light" ? "light" : "dark";
+  if (stored === "light" || stored === "amoled") return stored;
+  return "dark";
 }
 
 export function saveTheme(theme: Theme) {

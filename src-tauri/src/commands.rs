@@ -2,10 +2,11 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::auth::AuthSession;
 use crate::mal::calendar::{build_airing_calendar, continue_watching_entries};
+use crate::mal::home_feed::build_home_feed;
 use crate::mal::suggestions::{compute_suggestions, compute_suggestions_from_list};
 use crate::mal::types::{
     AiringCalendarEntry, AnimeListEntry, AnimeListResponse, AnimeNode, AnimeSearchResponse,
-    AnimelistLoadProgress, ApiResponse, SearchAnimeParams, UpdateListStatusRequest,
+    AnimelistLoadProgress, ApiResponse, HomeFeed, SearchAnimeParams, UpdateListStatusRequest,
     UpdateUserProfileRequest, UserProfile,
 };
 use crate::mal::MalClient;
@@ -36,14 +37,16 @@ fn cached_response<T>(
         data,
         from_cache: true,
         cache_expires_at: cache.cache_expires_at(key, ttl_secs),
+        cached_at: cache.cache_saved_at(key),
     }
 }
 
-fn fresh_response<T>(data: T) -> ApiResponse<T> {
+fn fresh_response<T>(cache: &crate::cache::DataCache, key: &str, data: T) -> ApiResponse<T> {
     ApiResponse {
         data,
         from_cache: false,
         cache_expires_at: None,
+        cached_at: cache.cache_saved_at(key),
     }
 }
 
@@ -61,7 +64,7 @@ where
     match fetch().await {
         Ok(data) => {
             let _ = state.cache.set(key, &data);
-            Ok(fresh_response(data))
+            Ok(fresh_response(&state.cache, key, data))
         }
         Err(err) => {
             if let Some(cached) = state.cache.get::<T>(key) {
@@ -183,10 +186,28 @@ pub async fn get_anime_details(
     state: State<'_, AppState>,
     id: u64,
 ) -> Result<AnimeNode, String> {
+    let key = format!("anime_detail_{id}");
+    if let Some(cached) = state
+        .cache
+        .get_if_fresh::<AnimeNode>(&key, HOME_FEED_CACHE_TTL_SECS)
+    {
+        return Ok(cached);
+    }
+
     let token = get_token(&state).await?;
-    MalClient::get_anime_details(&token, id)
-        .await
-        .map_err(|e| e.to_string())
+    match MalClient::get_anime_details(&token, id).await {
+        Ok(detail) => {
+            let _ = state.cache.set(&key, &detail);
+            Ok(detail)
+        }
+        Err(err) => {
+            if let Some(cached) = state.cache.get::<AnimeNode>(&key) {
+                Ok(cached)
+            } else {
+                Err(err.to_string())
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -309,7 +330,7 @@ pub async fn get_user_animelist_all(
                     done: true,
                 },
             );
-            Ok(fresh_response(data))
+            Ok(fresh_response(&state.cache, "animelist_all", data))
         }
         Err(err) => {
             if let Some(cached) = state.cache.get::<Vec<AnimeListEntry>>("animelist_all") {
@@ -339,6 +360,7 @@ fn invalidate_list_caches(state: &State<'_, AppState>) {
     let _ = state.cache.delete("continue_watching");
     let _ = state.cache.delete("suggestions");
     let _ = state.cache.delete("airing_calendar");
+    let _ = state.cache.delete("home_feed");
 }
 
 #[tauri::command]
@@ -432,19 +454,55 @@ pub async fn update_anime_list_status(
 pub async fn get_airing_calendar(
     app: AppHandle,
     state: State<'_, AppState>,
+    force_refresh: Option<bool>,
 ) -> Result<ApiResponse<Vec<AiringCalendarEntry>>, String> {
-    let response = with_cache(&state, "airing_calendar", HOME_FEED_CACHE_TTL_SECS, || async {
-        let token = get_token(&state).await?;
-        build_airing_calendar(&token)
-            .await
-            .map_err(|e| e.to_string())
-    })
+    let response = with_cache_ttl(
+        &state,
+        "airing_calendar",
+        HOME_FEED_CACHE_TTL_SECS,
+        force_refresh.unwrap_or(false),
+        || async {
+            let token = get_token(&state).await?;
+            let list = state.cache.get::<Vec<AnimeListEntry>>("animelist_all");
+            build_airing_calendar(&state.cache, &token, list)
+                .await
+                .map_err(|e| e.to_string())
+        },
+    )
     .await?;
 
     let prefs = load_app_preferences();
     let _ = sync_episode_notifications(&app, &prefs, &response.data);
 
     Ok(response)
+}
+
+#[tauri::command]
+pub async fn get_home_feed(
+    state: State<'_, AppState>,
+    force_refresh: Option<bool>,
+) -> Result<ApiResponse<HomeFeed>, String> {
+    with_cache_ttl(
+        &state,
+        "home_feed",
+        HOME_FEED_CACHE_TTL_SECS,
+        force_refresh.unwrap_or(false),
+        || async {
+            let token = get_token(&state).await?;
+            let list = if let Some(cached) = state.cache.get::<Vec<AnimeListEntry>>("animelist_all")
+            {
+                cached
+            } else {
+                MalClient::fetch_all_user_animelist(&token)
+                    .await
+                    .map_err(|e| e.to_string())?
+            };
+            build_home_feed(&state.cache, &token, &list)
+                .await
+                .map_err(|e| e.to_string())
+        },
+    )
+    .await
 }
 
 #[tauri::command]

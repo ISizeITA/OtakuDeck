@@ -8,6 +8,7 @@ import { OnboardingOverlay } from "@/components/OnboardingOverlay";
 import { useAuth } from "@/hooks/useAuth";
 import { useDeepLinkCapture } from "@/hooks/useDeepLinkCapture";
 import { usePendingAnimeOpener } from "@/hooks/usePendingAnimeOpener";
+import { usePendingNavOpener } from "@/hooks/usePendingNavOpener";
 import { isOnboardingComplete } from "@/lib/settingsStorage";
 import { LandingPage } from "@/pages/LandingPage";
 import { HomePage } from "@/pages/HomePage";
@@ -22,6 +23,7 @@ function AppShellContent() {
   const { openAnime } = useAnimeModal();
 
   usePendingAnimeOpener(openAnime);
+  usePendingNavOpener(setActiveTab);
 
   return (
     <>

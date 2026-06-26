@@ -161,6 +161,34 @@ export function ProfilePage({ onClose, onSaved }: ProfilePageProps) {
                       {t("profile.statsMean")}
                     </span>
                   </div>
+                  <div>
+                    <span className="profile-stats__value">
+                      {(stats.num_items ?? 0) > 0
+                        ? `${Math.round(((stats.num_items_completed ?? 0) / (stats.num_items ?? 1)) * 100)}%`
+                        : "—"}
+                    </span>
+                    <span className="profile-stats__label">
+                      {t("profile.statsCompletion")}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="profile-stats__value">
+                      {stats.num_items_dropped ?? 0}
+                    </span>
+                    <span className="profile-stats__label">
+                      {t("profile.statsDropped")}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="profile-stats__value">
+                      {(stats.num_items ?? 0) > 0
+                        ? Math.round((stats.num_episodes ?? 0) / (stats.num_items ?? 1))
+                        : 0}
+                    </span>
+                    <span className="profile-stats__label">
+                      {t("profile.statsAvgEpisodes")}
+                    </span>
+                  </div>
                 </div>
               </section>
             )}

@@ -28,13 +28,14 @@ import {
   type SearchShortcut,
 } from "@/lib/keyboardShortcut";
 
-export type Theme = "dark" | "light";
+export type Theme = "dark" | "light" | "amoled";
 export type LanguagePreference = "system" | Locale;
 
 interface SettingsContextValue {
   theme: Theme;
   setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
+  cycleTheme: () => void;
   language: LanguagePreference;
   setLanguage: (language: LanguagePreference) => void;
   locale: Locale;
@@ -81,6 +82,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setTheme(theme === "dark" ? "light" : "dark");
   }, [setTheme, theme]);
 
+  const cycleTheme = useCallback(() => {
+    const order: Theme[] = ["dark", "light", "amoled"];
+    const idx = order.indexOf(theme);
+    setTheme(order[(idx + 1) % order.length]);
+  }, [setTheme, theme]);
+
   const setLanguage = useCallback((next: LanguagePreference) => {
     setLanguageState(next);
     saveLanguage(next);
@@ -108,6 +115,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       theme,
       setTheme,
       toggleTheme,
+      cycleTheme,
       language,
       setLanguage,
       locale,
@@ -121,6 +129,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       theme,
       setTheme,
       toggleTheme,
+      cycleTheme,
       language,
       setLanguage,
       locale,

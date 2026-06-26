@@ -125,6 +125,8 @@ pub fn run() {
 
             commands::get_airing_calendar,
 
+            commands::get_home_feed,
+
             commands::get_continue_watching,
 
             commands::get_app_preferences,

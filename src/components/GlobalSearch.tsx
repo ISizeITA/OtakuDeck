@@ -60,6 +60,10 @@ export function GlobalSearch() {
   }, []);
 
   useEffect(() => {
+    void ensureListCache();
+  }, [ensureListCache]);
+
+  useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (matchesSearchShortcut(e, searchShortcut)) {
         e.preventDefault();

@@ -107,15 +107,27 @@ export interface AiringCalendarEntry {
   main_picture?: Picture;
   num_episodes?: number;
   num_episodes_watched?: number;
+  list_status?: string;
   broadcast_day: string;
   broadcast_time?: string;
   next_episode?: number;
+}
+
+export interface HomeFeed {
+  suggestions: AnimeNode[];
+  continue_watching: AnimeListEntry[];
+  seasonal: AnimeNode[];
+  airing_ranking: AnimeNode[];
+  airing_today: AiringCalendarEntry[];
+  season_year: number;
+  season_name: string;
 }
 
 export interface ApiResponse<T> {
   data: T;
   from_cache: boolean;
   cache_expires_at?: string | null;
+  cached_at?: string | null;
 }
 
 export interface AppPreferences {

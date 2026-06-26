@@ -17,6 +17,7 @@ export function isOAuthCallbackUrl(url: string): boolean {
  */
 export function parseAnimeDeepLink(url: string): number | null {
   if (isOAuthCallbackUrl(url)) return null;
+  if (parseNavDeepLink(url) !== null) return null;
 
   try {
     const normalized = url.includes("://") ? url : `otakudeck://${url}`;
@@ -40,6 +41,36 @@ export function parseAnimeDeepLink(url: string): number | null {
     if (match) {
       const id = parseInt(match[1], 10);
       return Number.isFinite(id) && id > 0 ? id : null;
+    }
+  }
+
+  return null;
+}
+
+export type NavDeepLinkTab = "home" | "list" | "calendar";
+
+/** Parse `otakudeck://list`, `otakudeck://calendar`, `otakudeck://home`. */
+export function parseNavDeepLink(url: string): NavDeepLinkTab | null {
+  if (isOAuthCallbackUrl(url)) return null;
+
+  try {
+    const normalized = url.includes("://") ? url : `otakudeck://${url}`;
+    const parsed = new URL(normalized);
+    if (parsed.protocol !== "otakudeck:") return null;
+
+    const host = parsed.hostname.toLowerCase();
+    if (host === "list" || host === "calendar" || host === "home") {
+      return host;
+    }
+
+    const path = parsed.pathname.replace(/^\//, "").toLowerCase();
+    if (path === "list" || path === "calendar" || path === "home") {
+      return path as NavDeepLinkTab;
+    }
+  } catch {
+    const match = url.match(/(?:otakudeck:\/\/)?(list|calendar|home)/i);
+    if (match) {
+      return match[1].toLowerCase() as NavDeepLinkTab;
     }
   }
 

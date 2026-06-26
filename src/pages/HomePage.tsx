@@ -1,17 +1,23 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { api } from "@/lib/api";
 import { AnimeGrid } from "@/components/AnimeGrid";
 import { OfflineBanner } from "@/components/OfflineBanner";
 import { SectionHeader } from "@/components/SectionHeader";
+import { useAnimeModal } from "@/context/AnimeModalContext";
 import { useRefresh } from "@/context/RefreshContext";
 import { useTranslation } from "@/context/SettingsContext";
 import { useMalLabels } from "@/hooks/useMalLabels";
-import { translate, type TranslationKey } from "@/i18n/translations";
-import { api } from "@/lib/api";
-import { cacheExpiryFromResponse, mergeCacheExpiry } from "@/lib/cacheExpiry";
+import { cacheExpiryFromResponse } from "@/lib/cacheExpiry";
+import { formatMalSyncTime } from "@/lib/malSync";
 import "@/styles/components/page.css";
-import { getCurrentSeason, type AnimeListEntry, type AnimeNode } from "@/types/mal";
-
-const LOAD_GAP_MS = 400;
+import {
+  getCoverUrl,
+  type AiringCalendarEntry,
+  type AnimeListEntry,
+  type AnimeNode,
+  type ApiResponse,
+  type HomeFeed,
+} from "@/types/mal";
 
 function entryToNode(entry: AnimeListEntry): AnimeNode {
   return {
@@ -20,118 +26,74 @@ function entryToNode(entry: AnimeListEntry): AnimeNode {
   };
 }
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export function HomePage() {
   const { t, locale } = useTranslation();
   const { mediaType, season } = useMalLabels();
   const { refreshKey } = useRefresh();
+  const { openAnime } = useAnimeModal();
   const [suggestions, setSuggestions] = useState<AnimeNode[]>([]);
   const [continueWatching, setContinueWatching] = useState<AnimeNode[]>([]);
   const [seasonal, setSeasonal] = useState<AnimeNode[]>([]);
   const [airing, setAiring] = useState<AnimeNode[]>([]);
+  const [airingToday, setAiringToday] = useState<AiringCalendarEntry[]>([]);
+  const [seasonYear, setSeasonYear] = useState(new Date().getFullYear());
+  const [seasonName, setSeasonName] = useState("spring");
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
   const [cacheExpiresAt, setCacheExpiresAt] = useState<string | null>(null);
-  const [errors, setErrors] = useState<string[]>([]);
+  const [cachedAt, setCachedAt] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const { year, season: seasonKey } = getCurrentSeason();
+  const applyFeed = useCallback((resp: ApiResponse<HomeFeed>) => {
+    setSuggestions(resp.data.suggestions);
+    setContinueWatching(resp.data.continue_watching.map(entryToNode));
+    setSeasonal(resp.data.seasonal);
+    setAiring(resp.data.airing_ranking);
+    setAiringToday(resp.data.airing_today);
+    setSeasonYear(resp.data.season_year);
+    setSeasonName(resp.data.season_name);
+    setOffline(resp.from_cache);
+    setCachedAt(resp.cached_at ?? null);
+    setCacheExpiresAt(
+      cacheExpiryFromResponse(resp.from_cache, resp.cache_expires_at),
+    );
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setErrors([]);
 
     async function load() {
-      const errs: string[] = [];
-      let usedCache = false;
-      let expiresAt: string | null = null;
+      setLoading(true);
+      setError(null);
       const forceRefresh = refreshKey > 0;
 
       try {
-        const sea = await api.getSeasonalAnime(year, seasonKey, 12, 0, forceRefresh);
+        const resp = await api.getHomeFeed(forceRefresh);
         if (cancelled) return;
-        setSeasonal(sea.data.data.map((d) => d.node));
-        usedCache = usedCache || sea.from_cache;
-        expiresAt = mergeCacheExpiry(
-          expiresAt,
-          cacheExpiryFromResponse(sea.from_cache, sea.cache_expires_at),
-        );
+        applyFeed(resp);
+
+        if (resp.from_cache && !forceRefresh) {
+          void api
+            .getHomeFeed(true)
+            .then((fresh) => {
+              if (!cancelled) applyFeed(fresh);
+            })
+            .catch(() => {});
+        }
       } catch (err) {
-        errs.push(
-          `${translate(locale, "home.errorSeasonal" as TranslationKey)}: ${err}`,
-        );
+        if (!cancelled) setError(String(err));
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-
-      await sleep(LOAD_GAP_MS);
-      if (cancelled) return;
-
-      try {
-        const air = await api.getAiringAnime(12, 0, forceRefresh);
-        if (cancelled) return;
-        setAiring(air.data.data.map((d) => d.node));
-        usedCache = usedCache || air.from_cache;
-        expiresAt = mergeCacheExpiry(
-          expiresAt,
-          cacheExpiryFromResponse(air.from_cache, air.cache_expires_at),
-        );
-      } catch (err) {
-        errs.push(`${translate(locale, "home.errorAiring" as TranslationKey)}: ${err}`);
-      }
-
-      await sleep(LOAD_GAP_MS);
-      if (cancelled) return;
-
-      try {
-        const cont = await api.getContinueWatching(forceRefresh);
-        if (cancelled) return;
-        setContinueWatching(cont.data.map(entryToNode));
-        usedCache = usedCache || cont.from_cache;
-        expiresAt = mergeCacheExpiry(
-          expiresAt,
-          cacheExpiryFromResponse(cont.from_cache, cont.cache_expires_at),
-        );
-      } catch (err) {
-        errs.push(
-          `${translate(locale, "home.errorContinue" as TranslationKey)}: ${err}`,
-        );
-      }
-
-      await sleep(LOAD_GAP_MS);
-      if (cancelled) return;
-
-      try {
-        const sug = await api.getSuggestions(forceRefresh);
-        if (cancelled) return;
-        setSuggestions(sug.data);
-        usedCache = usedCache || sug.from_cache;
-        expiresAt = mergeCacheExpiry(
-          expiresAt,
-          cacheExpiryFromResponse(sug.from_cache, sug.cache_expires_at),
-        );
-      } catch (err) {
-        errs.push(
-          `${translate(locale, "home.errorSuggestions" as TranslationKey)}: ${err}`,
-        );
-      }
-
-      if (cancelled) return;
-      setOffline(usedCache);
-      setCacheExpiresAt(expiresAt);
-      setErrors(errs);
-      setLoading(false);
     }
 
     void load();
-
     return () => {
       cancelled = true;
     };
-  }, [year, seasonKey, locale, refreshKey]);
+  }, [applyFeed, refreshKey]);
 
-  if (loading) {
+  if (loading && suggestions.length === 0 && continueWatching.length === 0) {
     return (
       <div className="page page--centered">
         <span className="pill-button__spinner page__spinner" />
@@ -142,13 +104,54 @@ export function HomePage() {
   return (
     <div className="page">
       <OfflineBanner visible={offline} expiresAt={cacheExpiresAt} />
+      {cachedAt && (
+        <p className="page__sync-hint">
+          {t("common.lastMalSync", { time: formatMalSyncTime(cachedAt, locale) })}
+        </p>
+      )}
+      {error && <p className="page__error">{error}</p>}
 
-      {errors.length > 0 && (
-        <div className="page__error">
-          {errors.map((e) => (
-            <p key={e}>{e}</p>
-          ))}
-        </div>
+      {airingToday.length > 0 && (
+        <section className="page__section">
+          <SectionHeader
+            title={t("home.airingTodayTitle")}
+            subtitle={t("home.airingTodaySubtitle")}
+          />
+          <ul className="home-airing-today">
+            {airingToday.map((entry) => (
+              <li key={entry.anime_id}>
+                <button
+                  type="button"
+                  className="home-airing-today__item"
+                  onClick={() =>
+                    openAnime({
+                      id: entry.anime_id,
+                      title: entry.title,
+                      main_picture: entry.main_picture,
+                      num_episodes: entry.num_episodes,
+                    })
+                  }
+                >
+                  <img
+                    className="home-airing-today__cover"
+                    src={getCoverUrl({
+                      id: entry.anime_id,
+                      title: entry.title,
+                      main_picture: entry.main_picture,
+                    })}
+                    alt=""
+                  />
+                  <span className="home-airing-today__title">{entry.title}</span>
+                  <span className="home-airing-today__meta">
+                    {entry.broadcast_time}
+                    {entry.next_episode !== undefined &&
+                      ` · ${t("calendar.nextEpisode", { episode: entry.next_episode })}`}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       {continueWatching.length > 0 && (
@@ -182,8 +185,8 @@ export function HomePage() {
         <SectionHeader
           title={t("home.seasonalTitle")}
           subtitle={t("home.seasonalSubtitle", {
-            season: season(seasonKey),
-            year,
+            season: season(seasonName),
+            year: seasonYear,
           })}
         />
         <AnimeGrid

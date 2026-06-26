@@ -10,6 +10,8 @@ interface FilterChipsProps {
   activeId: string;
   onChange: (id: string) => void;
   label?: string;
+  multi?: boolean;
+  activeIds?: string[];
 }
 
 export function FilterChips({
@@ -17,7 +19,12 @@ export function FilterChips({
   activeId,
   onChange,
   label,
+  multi = false,
+  activeIds = [],
 }: FilterChipsProps) {
+  const isActive = (id: string) =>
+    multi ? activeIds.includes(id) : activeId === id;
+
   return (
     <div className="filter-chips">
       {label && <span className="filter-chips__label">{label}</span>}
@@ -26,9 +33,9 @@ export function FilterChips({
           <button
             key={chip.id}
             type="button"
-            className={`filter-chips__chip ${activeId === chip.id ? "filter-chips__chip--active" : ""}`}
+            className={`filter-chips__chip ${isActive(chip.id) ? "filter-chips__chip--active" : ""}`}
             onClick={() => onChange(chip.id)}
-            aria-pressed={activeId === chip.id}
+            aria-pressed={isActive(chip.id)}
           >
             {chip.label}
           </button>

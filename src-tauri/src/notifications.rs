@@ -1,9 +1,8 @@
 use std::sync::Mutex;
 
-use chrono::{Datelike, Duration, Local, NaiveTime, Weekday};
+use chrono::Weekday;
 use tauri::AppHandle;
-use tauri_plugin_notification::{NotificationExt, Schedule};
-use time::OffsetDateTime;
+use tauri_plugin_notification::{NotificationExt, Schedule, ScheduleInterval};
 
 use crate::mal::types::AiringCalendarEntry;
 use crate::preferences::AppPreferences;
@@ -24,10 +23,11 @@ pub fn sync_episode_notifications(
     let mut ids = Vec::new();
 
     for entry in entries {
-        let Some(at) = next_notification_time(&entry.broadcast_day, entry.broadcast_time.as_deref())
-        else {
+        let Some(weekday) = parse_weekday(&entry.broadcast_day) else {
             continue;
         };
+        let (hour, minute) = parse_hh_mm(entry.broadcast_time.as_deref().unwrap_or("18:00"))
+            .unwrap_or((18, 0));
 
         let id = entry.anime_id.min(i32::MAX as u64) as i32;
         let episode_label = entry
@@ -41,9 +41,13 @@ pub fn sync_episode_notifications(
             .id(id)
             .title("OtakuDeck")
             .body(body)
-            .schedule(Schedule::At {
-                date: at,
-                repeating: false,
+            .schedule(Schedule::Interval {
+                interval: ScheduleInterval {
+                    weekday: Some(weekday_to_calendar(weekday)),
+                    hour: Some(hour as u8),
+                    minute: Some(minute as u8),
+                    ..Default::default()
+                },
                 allow_while_idle: true,
             })
             .show()
@@ -65,22 +69,16 @@ fn cancel_scheduled(_app: &AppHandle) {
     }
 }
 
-fn next_notification_time(day: &str, time: Option<&str>) -> Option<OffsetDateTime> {
-    let weekday = parse_weekday(day)?;
-    let now = Local::now();
-    let mut date = now.date_naive();
-
-    for _ in 0..8 {
-        if date.weekday() == weekday {
-            let dt = apply_broadcast_time(date, time)?;
-            if dt > now {
-                return Some(to_offset(dt));
-            }
-        }
-        date += Duration::days(1);
+fn weekday_to_calendar(weekday: Weekday) -> u8 {
+    match weekday {
+        Weekday::Sun => 1,
+        Weekday::Mon => 2,
+        Weekday::Tue => 3,
+        Weekday::Wed => 4,
+        Weekday::Thu => 5,
+        Weekday::Fri => 6,
+        Weekday::Sat => 7,
     }
-
-    None
 }
 
 fn parse_weekday(day: &str) -> Option<Weekday> {
@@ -96,22 +94,9 @@ fn parse_weekday(day: &str) -> Option<Weekday> {
     }
 }
 
-fn apply_broadcast_time(
-    date: chrono::NaiveDate,
-    broadcast: Option<&str>,
-) -> Option<chrono::DateTime<Local>> {
-    let (hour, minute) = parse_hh_mm(broadcast.unwrap_or("18:00"))?;
-    let time = NaiveTime::from_hms_opt(hour.into(), minute.into(), 0)?;
-    date.and_time(time).and_local_timezone(Local).single()
-}
-
 fn parse_hh_mm(value: &str) -> Option<(u32, u32)> {
     let mut parts = value.split(':');
     let hour: u32 = parts.next()?.parse().ok()?;
     let minute: u32 = parts.next()?.parse().ok()?;
     Some((hour, minute))
-}
-
-fn to_offset(dt: chrono::DateTime<Local>) -> OffsetDateTime {
-    OffsetDateTime::from_unix_timestamp(dt.timestamp()).unwrap_or_else(|_| OffsetDateTime::now_utc())
 }

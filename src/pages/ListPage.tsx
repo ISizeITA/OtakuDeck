@@ -15,6 +15,8 @@ import { useRefresh } from "@/context/RefreshContext";
 import { useMalLabels } from "@/hooks/useMalLabels";
 import { api } from "@/lib/api";
 import { cacheExpiryFromResponse } from "@/lib/cacheExpiry";
+import { loadListPrefs, saveListPrefs, type ListSort } from "@/lib/listPrefs";
+import { formatMalSyncTime } from "@/lib/malSync";
 import "@/styles/components/onboarding.css";
 import "@/styles/components/page.css";
 import type { AnimelistLoadProgress, AnimeNode, AnimeStatistics, ListTabFilter } from "@/types/mal";
@@ -48,8 +50,6 @@ function listCountForTab(stats: AnimeStatistics, tab: ListTabFilter): number {
       return 0;
   }
 }
-
-type ListSort = "title" | "date_added" | "community_score";
 
 function sortAnimeList(
   anime: AnimeNode[],
@@ -111,17 +111,19 @@ function filterListSearch(
 export function ListPage() {
   const { t, locale } = useTranslation();
   const { listStatus } = useMalLabels();
-  const [activeTab, setActiveTab] = useState<ListTabFilter>("all");
-  const [sort, setSort] = useState<ListSort>("date_added");
+  const storedPrefs = useMemo(() => loadListPrefs(), []);
+  const [activeTab, setActiveTab] = useState<ListTabFilter>(storedPrefs.activeTab);
+  const [sort, setSort] = useState<ListSort>(storedPrefs.sort);
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [genreIds, setGenreIds] = useState<string[]>([]);
+  const [genreIds, setGenreIds] = useState<string[]>(storedPrefs.genreIds);
   const [genrePickerOpen, setGenrePickerOpen] = useState(false);
   const [anime, setAnime] = useState<AnimeNode[]>([]);
   const [stats, setStats] = useState<AnimeStatistics | null>(null);
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
   const [cacheExpiresAt, setCacheExpiresAt] = useState<string | null>(null);
+  const [cachedAt, setCachedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadProgress, setLoadProgress] = useState<AnimelistLoadProgress | null>(
     null,
@@ -129,6 +131,10 @@ export function ListPage() {
   const { refreshKey: modalRefreshKey } = useAnimeModal();
   const { refreshKey: pullRefreshKey } = useRefresh();
   const loadIdRef = useRef(0);
+
+  useEffect(() => {
+    saveListPrefs({ activeTab, sort, genreIds });
+  }, [activeTab, sort, genreIds]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchQuery), 250);
@@ -203,9 +209,30 @@ export function ListPage() {
         })),
       );
       setOffline(resp.from_cache);
+      setCachedAt(resp.cached_at ?? null);
       setCacheExpiresAt(
         cacheExpiryFromResponse(resp.from_cache, resp.cache_expires_at),
       );
+
+      if (resp.from_cache && !forceRefresh) {
+        void api
+          .getUserAnimelistAll(true)
+          .then((fresh) => {
+            if (loadId !== loadIdRef.current) return;
+            setAnime(
+              fresh.data.map((e) => ({
+                ...e.node,
+                my_list_status: e.list_status ?? e.node.my_list_status,
+              })),
+            );
+            setOffline(fresh.from_cache);
+            setCachedAt(fresh.cached_at ?? null);
+            setCacheExpiresAt(
+              cacheExpiryFromResponse(fresh.from_cache, fresh.cache_expires_at),
+            );
+          })
+          .catch(() => {});
+      }
     } catch (err) {
       if (loadId !== loadIdRef.current) return;
       setError(String(err));
@@ -242,6 +269,11 @@ export function ListPage() {
   return (
     <div className="page">
       <OfflineBanner visible={offline} expiresAt={cacheExpiresAt} />
+      {cachedAt && (
+        <p className="page__sync-hint">
+          {t("common.lastMalSync", { time: formatMalSyncTime(cachedAt, locale) })}
+        </p>
+      )}
 
       {stats && (
         <StatsAccordion stats={stats} listCount={filteredListCount} />

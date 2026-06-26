@@ -15,7 +15,7 @@ interface SettingsPanelProps {
 export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const {
     theme,
-    toggleTheme,
+    cycleTheme,
     language,
     setLanguage,
     searchShortcut,
@@ -98,16 +98,20 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
               <div className="settings-row__info">
                 <span className="settings-row__label">{t("settings.theme")}</span>
                 <span className="settings-row__hint">
-                  {theme === "dark" ? t("settings.themeDark") : t("settings.themeLight")}
+                  {theme === "dark"
+                    ? t("settings.themeDark")
+                    : theme === "light"
+                      ? t("settings.themeLight")
+                      : t("settings.themeAmoled")}
                 </span>
               </div>
               <button
                 type="button"
-                className={`theme-switch ${theme === "light" ? "theme-switch--light" : ""}`}
+                className={`theme-switch ${theme !== "dark" ? "theme-switch--light" : ""}`}
                 role="switch"
-                aria-checked={theme === "light"}
+                aria-checked={theme !== "dark"}
                 aria-label={t("settings.theme")}
-                onClick={toggleTheme}
+                onClick={cycleTheme}
               >
                 <span className="theme-switch__track">
                   <span className="theme-switch__thumb" />

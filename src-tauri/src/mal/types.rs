@@ -166,11 +166,24 @@ pub struct AiringCalendarEntry {
     pub num_episodes: Option<u32>,
     #[serde(default)]
     pub num_episodes_watched: Option<u32>,
+    #[serde(default)]
+    pub list_status: String,
     pub broadcast_day: String,
     #[serde(default)]
     pub broadcast_time: Option<String>,
     #[serde(default)]
     pub next_episode: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HomeFeed {
+    pub suggestions: Vec<AnimeNode>,
+    pub continue_watching: Vec<AnimeListEntry>,
+    pub seasonal: Vec<AnimeNode>,
+    pub airing_ranking: Vec<AnimeNode>,
+    pub airing_today: Vec<AiringCalendarEntry>,
+    pub season_year: u32,
+    pub season_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,6 +202,8 @@ pub struct ApiResponse<T> {
     pub from_cache: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_expires_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

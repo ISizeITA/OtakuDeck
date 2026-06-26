@@ -43,8 +43,24 @@
   background-clip: text;
 }
 
-.main-header__user {
+.main-header__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
   min-width: 80px;
+  justify-content: flex-end;
+}
+
+.main-header__search {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+}
+
+.main-header__logo-wrap {
+  display: flex;
+  flex-shrink: 0;
 }
 
 .main-content {

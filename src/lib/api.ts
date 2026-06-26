@@ -7,6 +7,7 @@ import type {
   AnimeSearchResponse,
   ApiResponse,
   AppPreferences,
+  HomeFeed,
   ListStatus,
   SearchAnimeParams,
   UpdateUserProfileRequest,
@@ -62,8 +63,12 @@ export const api = {
       offset,
       forceRefresh,
     }),
-  getAiringCalendar: () =>
-    invoke<ApiResponse<AiringCalendarEntry[]>>("get_airing_calendar"),
+  getAiringCalendar: (forceRefresh?: boolean) =>
+    invoke<ApiResponse<AiringCalendarEntry[]>>("get_airing_calendar", {
+      forceRefresh,
+    }),
+  getHomeFeed: (forceRefresh?: boolean) =>
+    invoke<ApiResponse<HomeFeed>>("get_home_feed", { forceRefresh }),
   getContinueWatching: (forceRefresh?: boolean) =>
     invoke<ApiResponse<AnimeListEntry[]>>("get_continue_watching", {
       forceRefresh,
