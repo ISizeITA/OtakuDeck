@@ -1,6 +1,11 @@
 use tokio::sync::Mutex;
 
+use accounts::AccountStore;
+use auth::AuthManager;
+use cache::DataCache;
+use tauri::Manager;
 
+pub mod accounts;
 
 pub mod auth;
 
@@ -24,20 +29,10 @@ pub mod updates;
 
 
 
-use auth::AuthManager;
-
-use cache::DataCache;
-
-use tauri::Manager;
-
-
-
 pub struct AppState {
-
+    pub accounts: Mutex<AccountStore>,
     pub auth: Mutex<AuthManager>,
-
-    pub cache: DataCache,
-
+    pub cache: Mutex<DataCache>,
 }
 
 
@@ -59,37 +54,43 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
 
         .setup(|app| {
-
             if let Ok(dir) = app.path().app_data_dir() {
-
                 auth::set_app_storage_dir(dir.clone());
-
                 preferences::set_preferences_dir(dir.clone());
 
-                let cache_dir = dir.join("cache");
+                let store = AccountStore::load_or_migrate(dir.clone())
+                    .unwrap_or_else(|e| {
+                        eprintln!("AccountStore init failed: {e}");
+                        AccountStore::load_or_migrate(dir.clone()).unwrap_or_else(|_| {
+                            AccountStore::load_or_migrate(std::env::temp_dir()).expect("accounts")
+                        })
+                    });
+
+                let mut auth = AuthManager::new();
+                let cache_dir = if let Some(active_id) = store.active_account_id() {
+                    auth.bind_account(&active_id);
+                    store.account_cache_dir(&active_id)
+                } else {
+                    dir.join("cache")
+                };
 
                 app.manage(AppState {
-
-                    auth: Mutex::new(AuthManager::new()),
-
-                    cache: DataCache::new(cache_dir),
-
+                    accounts: Mutex::new(store),
+                    auth: Mutex::new(auth),
+                    cache: Mutex::new(DataCache::new(cache_dir)),
                 });
-
             } else {
-
                 app.manage(AppState {
-
+                    accounts: Mutex::new(AccountStore::load_or_migrate(std::path::PathBuf::from(
+                        "data",
+                    ))
+                    .expect("accounts")),
                     auth: Mutex::new(AuthManager::new()),
-
-                    cache: DataCache::new(std::path::PathBuf::from("cache")),
-
+                    cache: Mutex::new(DataCache::new(std::path::PathBuf::from("cache"))),
                 });
-
             }
 
             Ok(())
-
         })
 
         .invoke_handler(tauri::generate_handler![
@@ -97,6 +98,12 @@ pub fn run() {
             commands::start_oauth_login,
 
             commands::complete_oauth_login,
+
+            commands::list_mal_accounts,
+
+            commands::switch_mal_account,
+
+            commands::remove_mal_account,
 
             commands::get_platform,
 

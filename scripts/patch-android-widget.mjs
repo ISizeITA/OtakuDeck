@@ -83,22 +83,51 @@ function patchManifest(manifestPath) {
 function patchMainActivity(mainPath) {
   if (!existsSync(mainPath)) return false;
   let source = readFileSync(mainPath, "utf8");
-  if (source.includes("WidgetRefresh.updateAll")) return true;
+  let changed = false;
 
   if (!source.includes("import com.otakudeck.app.WidgetRefresh")) {
     const pkg = packageName;
     source = source.replace(
       `package ${pkg}`,
-      `package ${pkg}\n\nimport com.otakudeck.app.WidgetRefresh`,
+      `package ${pkg}\n\nimport com.otakudeck.app.WidgetRefresh\nimport com.otakudeck.app.WidgetScheduler`,
     );
+    changed = true;
+  } else if (!source.includes("WidgetScheduler")) {
+    source = source.replace(
+      "import com.otakudeck.app.WidgetRefresh",
+      "import com.otakudeck.app.WidgetRefresh\nimport com.otakudeck.app.WidgetScheduler",
+    );
+    changed = true;
   }
 
-  source = source.replace(
-    /override fun onResume\(\)\s*\{/,
-    "override fun onResume() {\n        WidgetRefresh.updateAll(this)",
-  );
+  if (!source.includes("WidgetRefresh.updateAll")) {
+    source = source.replace(
+      /override fun onResume\(\)\s*\{/,
+      "override fun onResume() {\n        WidgetRefresh.updateAll(this)\n        WidgetScheduler.schedule(this)",
+    );
+    changed = true;
+  } else if (!source.includes("WidgetScheduler.schedule")) {
+    source = source.replace(
+      "WidgetRefresh.updateAll(this)",
+      "WidgetRefresh.updateAll(this)\n        WidgetScheduler.schedule(this)",
+    );
+    changed = true;
+  }
 
-  writeFileSync(mainPath, source);
+  if (changed) writeFileSync(mainPath, source);
+  return true;
+}
+
+function patchAppGradle(gradlePath) {
+  if (!existsSync(gradlePath)) return false;
+  let gradle = readFileSync(gradlePath, "utf8");
+  const dep = 'implementation "androidx.work:work-runtime-ktx:2.9.0"';
+  if (gradle.includes("work-runtime-ktx")) return true;
+  gradle = gradle.replace(
+    /dependencies\s*\{/,
+    `dependencies {\n    ${dep}`,
+  );
+  writeFileSync(gradlePath, gradle);
   return true;
 }
 
@@ -118,6 +147,7 @@ for (const mainRoot of androidRoots) {
 
   patchManifest(join(mainRoot, "AndroidManifest.xml"));
   patchMainActivity(join(javaDir, "MainActivity.kt"));
+  patchAppGradle(join(mainRoot, "..", "..", "build.gradle.kts"));
   patched = true;
   console.log("Patched Android widget:", mainRoot);
 }

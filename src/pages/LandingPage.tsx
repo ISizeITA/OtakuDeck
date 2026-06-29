@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { AccountSwitcher } from "@/components/AccountSwitcher";
 import { PillButton } from "@/components/PillButton";
 import { OtakuDeckLogo } from "@/components/OtakuDeckLogo";
 import { SettingsPanel } from "@/components/SettingsPanel";
+import "@/styles/components/account-switcher.css";
 import { useTranslation } from "@/context/SettingsContext";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -77,7 +79,18 @@ function PublisherSetup({ onConfigured }: { onConfigured: () => void }) {
 
 export function LandingPage() {
   const { t } = useTranslation();
-  const { login, isLoading, error, isMobile } = useAuth();
+  const {
+    login,
+    isLoading,
+    error,
+    isMobile,
+    accounts,
+    accountsLoading,
+    accountBusyId,
+    switchAccount,
+    addAccount,
+    removeAccount,
+  } = useAuth();
   const [ready, setReady] = useState<boolean | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
@@ -92,6 +105,7 @@ export function LandingPage() {
   }, []);
 
   const handleLogin = () => login();
+  const hasSavedAccounts = accounts.length > 0;
 
   if (ready === null) {
     return (
@@ -115,6 +129,19 @@ export function LandingPage() {
 
         {!ready ? (
           <PublisherSetup onConfigured={() => setReady(true)} />
+        ) : hasSavedAccounts ? (
+          <>
+            <p className="landing__subtitle">{t("accounts.title")}</p>
+            <AccountSwitcher
+              accounts={accounts}
+              loading={accountsLoading}
+              busyId={accountBusyId}
+              onSwitch={switchAccount}
+              onAdd={addAccount}
+              onRemove={removeAccount}
+              onSignIn={(id) => login({ accountId: id })}
+            />
+          </>
         ) : (
           <>
             <div className="landing__actions">

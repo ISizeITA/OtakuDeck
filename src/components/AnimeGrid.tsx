@@ -8,9 +8,10 @@ interface AnimeGridProps {
   anime: AnimeNode[];
   subtitle?: (anime: AnimeNode) => string;
   emptyMessage?: string;
+  newEpisodeIds?: Set<number>;
 }
 
-export function AnimeGrid({ anime, subtitle, emptyMessage }: AnimeGridProps) {
+export function AnimeGrid({ anime, subtitle, emptyMessage, newEpisodeIds }: AnimeGridProps) {
   const { t } = useTranslation();
   const { openAnime } = useAnimeModal();
   const resolvedEmpty = emptyMessage ?? t("common.noAnimeFound");
@@ -26,6 +27,7 @@ export function AnimeGrid({ anime, subtitle, emptyMessage }: AnimeGridProps) {
           key={item.id}
           anime={item}
           subtitle={subtitle?.(item)}
+          isNewEpisode={newEpisodeIds?.has(item.id)}
           onClick={() => openAnime(item)}
         />
       ))}

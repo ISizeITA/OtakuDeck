@@ -8,10 +8,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { api } from "@/lib/api";
 import {
   UPDATE_BANNER_DURATION_MS,
+  UPDATE_INSTALL_PROGRESS_EVENT,
   type UpdateCheckResult,
+  type UpdateInstallProgress,
 } from "@/types/updates";
 
 interface UpdateContextValue {
@@ -20,6 +23,7 @@ interface UpdateContextValue {
   updateAvailable: boolean;
   checking: boolean;
   installing: boolean;
+  installProgress: number;
   installError: string | null;
   checkError: string | null;
   bannerVisible: boolean;
@@ -39,6 +43,7 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
   const [changelog, setChangelog] = useState<string[]>([]);
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const [installProgress, setInstallProgress] = useState(0);
   const [installError, setInstallError] = useState<string | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
   const [bannerVisible, setBannerVisible] = useState(false);
@@ -100,6 +105,23 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     }
   }, [applyResult]);
 
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    void listen<UpdateInstallProgress>(
+      UPDATE_INSTALL_PROGRESS_EVENT,
+      (event) => {
+        setInstallProgress(event.payload.percent);
+      },
+    ).then((fn) => {
+      unlisten = fn;
+    });
+
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
   const applyUpdate = useCallback(async () => {
     if (!downloadUrl) {
       setInstallError("Missing download URL");
@@ -107,13 +129,14 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     }
     dismissBanner();
     setInstalling(true);
+    setInstallProgress(0);
     setInstallError(null);
     try {
       await api.installAppUpdate(downloadUrl);
     } catch (err) {
       setInstallError(String(err));
-    } finally {
       setInstalling(false);
+      setInstallProgress(0);
     }
   }, [downloadUrl, dismissBanner]);
 
@@ -132,6 +155,7 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
       updateAvailable,
       checking,
       installing,
+      installProgress,
       installError,
       checkError,
       bannerVisible,
@@ -146,6 +170,7 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
       updateAvailable,
       checking,
       installing,
+      installProgress,
       installError,
       checkError,
       bannerVisible,

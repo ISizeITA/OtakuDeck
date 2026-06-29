@@ -119,6 +119,7 @@ export interface HomeFeed {
   seasonal: AnimeNode[];
   airing_ranking: AnimeNode[];
   airing_today: AiringCalendarEntry[];
+  new_episode_ids?: number[];
   season_year: number;
   season_name: string;
 }

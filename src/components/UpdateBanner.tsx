@@ -5,8 +5,16 @@ import "@/styles/components/update-banner.css";
 
 export function UpdateBanner() {
   const { t } = useTranslation();
-  const { bannerVisible, updateAvailable, latestVersion, changelog, installing, applyUpdate, dismissBanner } =
-    useUpdate();
+  const {
+    bannerVisible,
+    updateAvailable,
+    latestVersion,
+    changelog,
+    installing,
+    installProgress,
+    applyUpdate,
+    dismissBanner,
+  } = useUpdate();
 
   if (!bannerVisible || !updateAvailable) return null;
 
@@ -25,7 +33,9 @@ export function UpdateBanner() {
           disabled={installing}
           onClick={() => void applyUpdate()}
         >
-          {installing ? t("update.installing") : t("update.action")}
+          {installing
+            ? t("update.installing", { percent: installProgress })
+            : t("update.action")}
         </PillButton>
         <button
           type="button"

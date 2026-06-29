@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use chrono::{Datelike, Local, Weekday};
+use chrono::{Datelike, Local, Timelike, Weekday};
 
 use super::client::{MalClient, MalError};
 use super::types::{AiringCalendarEntry, AnimeListEntry, AnimeNode, MyListStatus};
@@ -85,6 +85,67 @@ pub fn airing_today(entries: &[AiringCalendarEntry]) -> Vec<AiringCalendarEntry>
         .filter(|entry| weekday_from_str(&entry.broadcast_day) == Some(today))
         .cloned()
         .collect()
+}
+
+/// True when the next scheduled episode has aired (this week) but is not logged as watched.
+pub fn has_new_episode(entry: &AiringCalendarEntry) -> bool {
+    let Some(next) = entry.next_episode else {
+        return false;
+    };
+    let watched = entry.num_episodes_watched.unwrap_or(0);
+    if next <= watched {
+        return false;
+    }
+    if entry.list_status != "watching" && entry.list_status != "on_hold" {
+        return false;
+    }
+
+    let now = Local::now();
+    let today = now.weekday();
+    let Some(broadcast_day) = weekday_from_str(&entry.broadcast_day) else {
+        return false;
+    };
+
+    let today_idx = weekday_index(today);
+    let broadcast_idx = weekday_index(broadcast_day);
+
+    if today_idx > broadcast_idx {
+        return true;
+    }
+    if today_idx < broadcast_idx {
+        return false;
+    }
+
+    let Some((jst_h, jst_m)) = parse_hh_mm(entry.broadcast_time.as_deref().unwrap_or("00:00")) else {
+        return true;
+    };
+
+    let jst_minutes = jst_h * 60 + jst_m;
+    let local_offset = now.offset().local_minus_utc() / 60;
+    let utc_minutes = jst_minutes as i32 - 9 * 60;
+    let mut local_minutes = utc_minutes + local_offset;
+    local_minutes = ((local_minutes % (24 * 60)) + 24 * 60) % (24 * 60);
+    let now_minutes = now.hour() * 60 + now.minute();
+    now_minutes >= local_minutes as u32
+}
+
+fn weekday_index(day: Weekday) -> u8 {
+    match day {
+        Weekday::Mon => 0,
+        Weekday::Tue => 1,
+        Weekday::Wed => 2,
+        Weekday::Thu => 3,
+        Weekday::Fri => 4,
+        Weekday::Sat => 5,
+        Weekday::Sun => 6,
+    }
+}
+
+fn parse_hh_mm(value: &str) -> Option<(u32, u32)> {
+    let mut parts = value.split(':');
+    let h: u32 = parts.next()?.parse().ok()?;
+    let m: u32 = parts.next()?.parse().ok()?;
+    Some((h, m))
 }
 
 async fn get_anime_details_cached(
@@ -233,6 +294,7 @@ pub fn continue_watching_entries(entries: Vec<AnimeListEntry>) -> Vec<AnimeListE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mal::types::AiringCalendarEntry;
 
     fn entry_with_status(status: &str, watched: u32) -> AnimeListEntry {
         AnimeListEntry {
@@ -259,11 +321,8 @@ mod tests {
             },
             list_status: Some(MyListStatus {
                 status: Some(status.into()),
-                score: None,
                 num_episodes_watched: Some(watched),
-                is_rewatching: None,
-                start_date: None,
-                finish_date: None,
+                ..Default::default()
             }),
         }
     }
@@ -284,11 +343,8 @@ mod tests {
     fn next_episode_plan_to_watch_starts_at_one() {
         let ls = MyListStatus {
             status: Some("plan_to_watch".into()),
-            score: None,
             num_episodes_watched: Some(0),
-            is_rewatching: None,
-            start_date: None,
-            finish_date: None,
+            ..Default::default()
         };
         assert_eq!(next_episode_number(Some(&ls), Some(12)), Some(1));
     }
@@ -297,12 +353,25 @@ mod tests {
     fn next_episode_watching_requires_progress() {
         let ls = MyListStatus {
             status: Some("watching".into()),
-            score: None,
             num_episodes_watched: Some(0),
-            is_rewatching: None,
-            start_date: None,
-            finish_date: None,
+            ..Default::default()
         };
         assert_eq!(next_episode_number(Some(&ls), Some(12)), None);
+    }
+
+    #[test]
+    fn has_new_episode_false_when_caught_up() {
+        let entry = AiringCalendarEntry {
+            anime_id: 1,
+            title: "Test".into(),
+            main_picture: None,
+            num_episodes: Some(12),
+            num_episodes_watched: Some(5),
+            list_status: "watching".into(),
+            broadcast_day: "monday".into(),
+            broadcast_time: Some("23:30".into()),
+            next_episode: Some(5),
+        };
+        assert!(!has_new_episode(&entry));
     }
 }

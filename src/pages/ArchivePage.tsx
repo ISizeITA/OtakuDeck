@@ -142,7 +142,7 @@ export function ArchivePage() {
         setAnime((prev) => mergeAnime(prev, nodes, reset));
 
         const pageFull = nodes.length >= PAGE_SIZE;
-        setHasMore(pageFull && !!resp.paging?.next);
+        setHasMore(!!resp.paging?.next && (pageFull || nodes.length > 0));
         setOffset(nodes.length > 0 ? pageOffset + PAGE_SIZE : 0);
       } catch (err) {
         if (fetchId !== fetchIdRef.current) return;

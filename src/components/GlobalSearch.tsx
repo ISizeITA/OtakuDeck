@@ -5,7 +5,9 @@ import {
   filterAnimeByQuery,
   mergeSearchResults,
   type SearchResultItem,
+  type SearchScope,
 } from "@/lib/animeSearch";
+import { LIST_CACHE_INVALIDATE_EVENT } from "@/lib/listCache";
 import { api } from "@/lib/api";
 import {
   GLOBAL_SEARCH_OPEN_EVENT,
@@ -25,6 +27,7 @@ export function GlobalSearch() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResultItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [scope, setScope] = useState<SearchScope>("all");
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -51,12 +54,23 @@ export function GlobalSearch() {
     listLoadingRef.current = true;
     try {
       const resp = await api.getUserAnimelistAll();
-      listCacheRef.current = resp.data.map((entry) => entry.node);
+      listCacheRef.current = resp.data.map((entry) => ({
+        ...entry.node,
+        my_list_status: entry.list_status,
+      }));
     } catch {
       listCacheRef.current = [];
     } finally {
       listLoadingRef.current = false;
     }
+  }, []);
+
+  useEffect(() => {
+    function onInvalidate() {
+      listCacheRef.current = null;
+    }
+    window.addEventListener(LIST_CACHE_INVALIDATE_EVENT, onInvalidate);
+    return () => window.removeEventListener(LIST_CACHE_INVALIDATE_EVENT, onInvalidate);
   }, []);
 
   useEffect(() => {
@@ -120,7 +134,7 @@ export function GlobalSearch() {
           remoteMatches = [];
         }
 
-        setResults(mergeSearchResults(localMatches, remoteMatches, RESULT_LIMIT));
+        setResults(mergeSearchResults(localMatches, remoteMatches, trimmed, RESULT_LIMIT, scope));
         setActiveIndex(0);
         setLoading(false);
       })();
@@ -129,7 +143,7 @@ export function GlobalSearch() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [query, ensureListCache]);
+  }, [query, scope, ensureListCache]);
 
   function handleInputKeyDown(e: React.KeyboardEvent) {
     if (e.key === "ArrowDown") {
@@ -149,6 +163,13 @@ export function GlobalSearch() {
   const trimmed = query.trim();
   const showHint = trimmed.length > 0 && trimmed.length < MIN_QUERY;
   const showEmpty = trimmed.length >= MIN_QUERY && !loading && results.length === 0;
+
+  const scopeOptions: { id: SearchScope; label: string }[] = [
+    { id: "all", label: t("search.scopeAll") },
+    { id: "list", label: t("search.scopeList") },
+    { id: "watching", label: t("search.scopeWatching") },
+    { id: "unscored", label: t("search.scopeUnscored") },
+  ];
 
   return (
     <div className="global-search-overlay" onClick={close} role="presentation">
@@ -184,6 +205,21 @@ export function GlobalSearch() {
             spellCheck={false}
           />
           <kbd className="global-search__kbd">Esc</kbd>
+        </div>
+
+        <div className="global-search__filters" role="tablist" aria-label={t("search.filters")}>
+          {scopeOptions.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              role="tab"
+              aria-selected={scope === option.id}
+              className={`global-search__filter${scope === option.id ? " global-search__filter--active" : ""}`}
+              onClick={() => setScope(option.id)}
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
 
         <div className="global-search__results" role="listbox">

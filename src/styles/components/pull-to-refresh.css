@@ -20,9 +20,15 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: var(--space-sm);
   overflow: hidden;
   pointer-events: none;
   transition: height 0.2s ease, opacity 0.2s ease;
+}
+
+.pull-to-refresh__label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
 }
 
 .pull-to-refresh__indicator--active {

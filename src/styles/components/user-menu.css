@@ -38,7 +38,8 @@
   position: absolute;
   top: calc(100% + var(--space-sm));
   right: 0;
-  min-width: 180px;
+  min-width: 280px;
+  max-width: min(360px, calc(100vw - 24px));
   padding: var(--space-sm);
   border-radius: var(--radius-lg);
   background: var(--color-bg-secondary);

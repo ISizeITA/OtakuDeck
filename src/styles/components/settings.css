@@ -407,6 +407,11 @@
   gap: var(--space-sm);
 }
 
+.settings-range {
+  width: 100%;
+  accent-color: var(--color-accent-orange);
+}
+
 .settings-panel__text--error {
   color: var(--color-error-text);
 }

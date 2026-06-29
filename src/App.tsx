@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimeModalProvider, useAnimeModal } from "@/context/AnimeModalContext";
 import { RefreshProvider } from "@/context/RefreshContext";
 import { SettingsProvider } from "@/context/SettingsContext";
@@ -12,6 +12,7 @@ import { useDeepLinkCapture } from "@/hooks/useDeepLinkCapture";
 import { usePendingAnimeOpener } from "@/hooks/usePendingAnimeOpener";
 import { usePendingNavOpener } from "@/hooks/usePendingNavOpener";
 import { useKeyboardNav } from "@/hooks/useKeyboardNav";
+import { ACCOUNT_SWITCHED_EVENT } from "@/lib/accountEvents";
 import { isOnboardingComplete } from "@/lib/settingsStorage";
 import { LandingPage } from "@/pages/LandingPage";
 import { HomePage } from "@/pages/HomePage";
@@ -24,6 +25,14 @@ function AppShellContent() {
   const [activeTab, setActiveTab] = useState<NavTab>("home");
   const [showOnboarding, setShowOnboarding] = useState(() => !isOnboardingComplete());
   const { openAnime, isOpen, closeAnime } = useAnimeModal();
+
+  useEffect(() => {
+    const handleAccountSwitch = () => {
+      if (isOpen) closeAnime();
+    };
+    window.addEventListener(ACCOUNT_SWITCHED_EVENT, handleAccountSwitch);
+    return () => window.removeEventListener(ACCOUNT_SWITCHED_EVENT, handleAccountSwitch);
+  }, [closeAnime, isOpen]);
 
   usePendingAnimeOpener(openAnime);
   usePendingNavOpener(setActiveTab);

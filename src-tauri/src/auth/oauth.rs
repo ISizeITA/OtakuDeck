@@ -9,13 +9,13 @@ use std::time::Duration;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 #[cfg(mobile)]
 use tauri_plugin_opener::OpenerExt;
 use thiserror::Error;
 use url::Url;
 
-use super::config::{default_redirect_uri, mal_client_id, PendingOAuth};
+use super::config::{default_redirect_uri, mal_client_id, OAuthStartOptions, PendingOAuth};
 use super::pkce::{generate_pkce_pair, PkcePair};
 use super::storage;
 
@@ -75,6 +75,8 @@ pub struct AuthManager {
     session_path: std::path::PathBuf,
     pending_oauth: Option<PendingOAuth>,
     storage_ready: bool,
+    account_id: Option<String>,
+    oauth_context: OAuthStartOptions,
 }
 
 impl AuthManager {
@@ -84,18 +86,41 @@ impl AuthManager {
             session_path: std::path::PathBuf::new(),
             pending_oauth: None,
             storage_ready: false,
+            account_id: None,
+            oauth_context: OAuthStartOptions::default(),
         }
     }
 
-    fn sync_storage_paths(&mut self) {
-        let dir = storage::app_storage_dir();
-        let session_path = dir.join(SESSION_FILE);
-        if self.storage_ready && self.session_path == session_path {
-            return;
-        }
-
+    pub fn bind_account(&mut self, account_id: &str) {
+        let session_path = storage::app_storage_dir()
+            .join("accounts")
+            .join(account_id)
+            .join(SESSION_FILE);
+        self.account_id = Some(account_id.to_string());
         self.session_path = session_path;
         self.storage_ready = true;
+        self.session = Self::load_session(&self.session_path).ok();
+    }
+
+    pub fn use_legacy_session_path(&mut self) {
+        self.account_id = None;
+        self.session_path = storage::app_storage_dir().join(SESSION_FILE);
+        self.storage_ready = true;
+        self.session = None;
+    }
+
+    pub fn take_oauth_context(&mut self) -> OAuthStartOptions {
+        std::mem::take(&mut self.oauth_context)
+    }
+
+    fn sync_storage_paths(&mut self) {
+        if !self.storage_ready {
+            if let Some(account_id) = self.account_id.clone() {
+                self.bind_account(&account_id);
+            } else {
+                self.use_legacy_session_path();
+            }
+        }
 
         if self.session.is_none() {
             self.session = Self::load_session(&self.session_path).ok();
@@ -103,9 +128,14 @@ impl AuthManager {
         if self.pending_oauth.is_none() {
             #[cfg(mobile)]
             {
-                self.pending_oauth = Self::load_pending_oauth(&dir).ok();
+                self.pending_oauth =
+                    Self::load_pending_oauth(&storage::app_storage_dir()).ok();
             }
         }
+    }
+
+    pub fn bound_account_id(&self) -> Option<&str> {
+        self.account_id.as_deref()
     }
 
     pub fn get_session(&mut self) -> Option<AuthSession> {
@@ -192,7 +222,17 @@ impl AuthManager {
         Ok(token.access_token)
     }
 
-    pub async fn start_oauth(&mut self, app: AppHandle) -> Result<(), AuthError> {
+    pub async fn start_oauth(
+        &mut self,
+        _app: AppHandle,
+        options: OAuthStartOptions,
+    ) -> Result<(), AuthError> {
+        self.oauth_context = options.clone();
+        if let Some(ref account_id) = options.account_id {
+            self.bind_account(account_id);
+        } else if options.new_account {
+            self.use_legacy_session_path();
+        }
         self.sync_storage_paths();
         let client_id = mal_client_id().map_err(|_| AuthError::MissingClientId)?;
         let redirect_uri = default_redirect_uri();
@@ -206,6 +246,8 @@ impl AuthManager {
                 code_verifier: pkce.verifier.clone(),
                 state: state.clone(),
                 redirect_uri: redirect_uri.clone(),
+                new_account: options.new_account,
+                account_id: options.account_id.clone(),
             };
             self.pending_oauth = Some(pending.clone());
             self.persist_pending_oauth(&pending)?;
@@ -243,16 +285,13 @@ impl AuthManager {
             self.persist_session(&session)?;
             self.pending_oauth = None;
 
-            app.emit("auth-success", &session)
-                .map_err(|e| AuthError::TokenExchange(e.to_string()))?;
-
             Ok(())
         }
     }
 
     pub async fn complete_oauth(
         &mut self,
-        app: AppHandle,
+        _app: AppHandle,
         code: String,
         state: String,
     ) -> Result<(), AuthError> {
@@ -290,9 +329,6 @@ impl AuthManager {
         #[cfg(mobile)]
         self.clear_pending_oauth()?;
 
-        app.emit("auth-success", &session)
-            .map_err(|e| AuthError::TokenExchange(e.to_string()))?;
-
         Ok(())
     }
 
@@ -316,6 +352,21 @@ impl AuthManager {
         let path = storage::app_storage_dir().join(PENDING_OAUTH_FILE);
         if path.exists() {
             std::fs::remove_file(path)?;
+        }
+        Ok(())
+    }
+
+    pub fn relocate_session_to_account(&mut self, account_id: &str) -> Result<(), AuthError> {
+        let session = self
+            .session
+            .clone()
+            .ok_or(AuthError::NotAuthenticated)?;
+        self.bind_account(account_id);
+        self.persist_session(&session)?;
+
+        let legacy = storage::app_storage_dir().join(SESSION_FILE);
+        if legacy.exists() && legacy != self.session_path {
+            let _ = std::fs::remove_file(legacy);
         }
         Ok(())
     }

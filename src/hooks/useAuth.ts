@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
+import { dispatchAccountSwitched } from "@/lib/accountEvents";
+import type { MalAccountSummary } from "@/types/accounts";
 
 export interface AuthSession {
   access_token: string;
@@ -16,6 +18,9 @@ export interface AuthState {
   error: string | null;
   session: AuthSession | null;
   isMobile: boolean;
+  accounts: MalAccountSummary[];
+  accountsLoading: boolean;
+  accountBusyId: string | null;
 }
 
 function parseOAuthCallback(url: string): { code: string; state: string } | null {
@@ -42,7 +47,23 @@ export function useAuth() {
     error: null,
     session: null,
     isMobile: false,
+    accounts: [],
+    accountsLoading: true,
+    accountBusyId: null,
   });
+
+  const loadAccounts = useCallback(async () => {
+    try {
+      const accounts = await invoke<MalAccountSummary[]>("list_mal_accounts");
+      setState((prev) => ({
+        ...prev,
+        accounts,
+        accountsLoading: false,
+      }));
+    } catch {
+      setState((prev) => ({ ...prev, accountsLoading: false }));
+    }
+  }, []);
 
   const checkSession = useCallback(async () => {
     try {
@@ -53,7 +74,9 @@ export function useAuth() {
         isLoading: false,
         error: null,
         session,
+        accountBusyId: null,
       }));
+      await loadAccounts();
     } catch (err) {
       setState((prev) => ({
         ...prev,
@@ -61,7 +84,7 @@ export function useAuth() {
         error: err instanceof Error ? err.message : String(err),
       }));
     }
-  }, []);
+  }, [loadAccounts]);
 
   const completeOAuthFromUrl = useCallback(async (url: string) => {
     const params = parseOAuthCallback(url);
@@ -126,31 +149,82 @@ export function useAuth() {
       }));
     });
 
+    const unlistenSwitch = listen<string>("account-switched", (event) => {
+      dispatchAccountSwitched(event.payload);
+      void checkSession();
+    });
+
     return () => {
       cancelled = true;
       unlistenSuccess.then((fn) => fn());
       unlistenError.then((fn) => fn());
+      unlistenSwitch.then((fn) => fn());
     };
   }, [checkSession, completeOAuthFromUrl]);
 
-  const login = useCallback(async () => {
-    setState((prev) => ({ ...prev, isLoading: true, error: null }));
-    try {
-      await invoke("start_oauth_login");
-      const platform = await invoke<string>("get_platform");
-      if (platform === "desktop") {
-        await checkSession();
-      } else {
-        setState((prev) => ({ ...prev, isLoading: false }));
+  const login = useCallback(
+    async (options?: { newAccount?: boolean; accountId?: string }) => {
+      setState((prev) => ({ ...prev, isLoading: true, error: null, accountBusyId: options?.accountId ?? null }));
+      try {
+        await invoke("start_oauth_login", {
+          newAccount: options?.newAccount ?? false,
+          accountId: options?.accountId ?? null,
+        });
+        const platform = await invoke<string>("get_platform");
+        if (platform === "desktop") {
+          await checkSession();
+        } else {
+          setState((prev) => ({ ...prev, isLoading: false, accountBusyId: null }));
+        }
+      } catch (err) {
+        setState((prev) => ({
+          ...prev,
+          isLoading: false,
+          accountBusyId: null,
+          error: err instanceof Error ? err.message : String(err),
+        }));
       }
-    } catch (err) {
-      setState((prev) => ({
-        ...prev,
-        isLoading: false,
-        error: err instanceof Error ? err.message : String(err),
-      }));
-    }
-  }, [checkSession]);
+    },
+    [checkSession],
+  );
+
+  const switchAccount = useCallback(
+    async (accountId: string) => {
+      setState((prev) => ({ ...prev, accountBusyId: accountId, error: null }));
+      try {
+        await invoke("switch_mal_account", { accountId });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.toLowerCase().includes("sessione scaduta") || message.toLowerCase().includes("sign in")) {
+          await login({ accountId });
+          return;
+        }
+        setState((prev) => ({ ...prev, error: message, accountBusyId: null }));
+      }
+    },
+    [login],
+  );
+
+  const addAccount = useCallback(async () => {
+    await login({ newAccount: true });
+  }, [login]);
+
+  const removeAccount = useCallback(
+    async (accountId: string) => {
+      setState((prev) => ({ ...prev, accountBusyId: accountId, error: null }));
+      try {
+        await invoke("remove_mal_account", { accountId });
+        await checkSession();
+      } catch (err) {
+        setState((prev) => ({
+          ...prev,
+          accountBusyId: null,
+          error: err instanceof Error ? err.message : String(err),
+        }));
+      }
+    },
+    [checkSession],
+  );
 
   const logout = useCallback(async () => {
     try {
@@ -161,14 +235,25 @@ export function useAuth() {
         isLoading: false,
         error: null,
         session: null,
+        accountBusyId: null,
       }));
+      await loadAccounts();
     } catch (err) {
       setState((prev) => ({
         ...prev,
         error: err instanceof Error ? err.message : String(err),
       }));
     }
-  }, []);
+  }, [loadAccounts]);
 
-  return { ...state, login, logout, checkSession };
+  return {
+    ...state,
+    login,
+    logout,
+    checkSession,
+    loadAccounts,
+    switchAccount,
+    addAccount,
+    removeAccount,
+  };
 }

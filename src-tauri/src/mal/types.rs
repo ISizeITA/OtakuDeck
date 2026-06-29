@@ -72,9 +72,72 @@ pub struct Genre {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+fn deserialize_optional_u8_from_number<'de, D>(deserializer: D) -> Result<Option<u8>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Unexpected};
+
+    struct U8Visitor;
+
+    impl<'de> de::Visitor<'de> for U8Visitor {
+        type Value = Option<u8>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("an optional integer score")
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            u8::try_from(value)
+                .map(Some)
+                .map_err(|_| de::Error::invalid_value(Unexpected::Unsigned(value), &self))
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            if value < 0 {
+                return Err(de::Error::invalid_value(
+                    Unexpected::Signed(value),
+                    &self,
+                ));
+            }
+            self.visit_u64(value as u64)
+        }
+
+        fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            if !value.is_finite() || value < 0.0 {
+                return Err(de::Error::invalid_value(
+                    Unexpected::Float(value),
+                    &self,
+                ));
+            }
+            Ok(Some(value.round() as u8))
+        }
+    }
+
+    deserializer.deserialize_any(U8Visitor)
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MyListStatus {
     pub status: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_u8_from_number")]
     pub score: Option<u8>,
     pub num_episodes_watched: Option<u32>,
     #[serde(default)]
@@ -83,6 +146,18 @@ pub struct MyListStatus {
     pub start_date: Option<String>,
     #[serde(default)]
     pub finish_date: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    #[serde(default)]
+    pub priority: Option<u8>,
+    #[serde(default)]
+    pub num_times_rewatched: Option<u32>,
+    #[serde(default)]
+    pub rewatch_value: Option<u8>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub comments: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -182,6 +257,8 @@ pub struct HomeFeed {
     pub seasonal: Vec<AnimeNode>,
     pub airing_ranking: Vec<AnimeNode>,
     pub airing_today: Vec<AiringCalendarEntry>,
+    #[serde(default)]
+    pub new_episode_ids: Vec<u64>,
     pub season_year: u32,
     pub season_name: String,
 }
@@ -213,7 +290,7 @@ pub struct UpdateListStatusRequest {
     pub num_watched_episodes: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SearchAnimeParams {
     pub query: Option<String>,
     pub limit: Option<u32>,
@@ -243,3 +320,24 @@ pub const LIST_NODE_FIELDS: &str =
     "list_status{status,score,num_episodes_watched,start_date},num_episodes,main_picture,mean,status,genres,alternative_titles{en}";
 
 pub const USER_FIELDS: &str = "anime_statistics{num_items_watching,num_items_completed,num_items_on_hold,num_items_dropped,num_items_plan_to_watch,num_items,num_days,num_episodes,mean_score},gender,location,birthday,time_zone,about";
+
+#[cfg(test)]
+mod tests {
+    use super::MyListStatus;
+
+    #[test]
+    fn parses_mal_update_list_status_response() {
+        let body = r#"{"status":"completed","score":8,"num_episodes_watched":24,"is_rewatching":false,"updated_at":"2021-01-29T18:25:23+00:00","start_date":"2021-01-29","finish_date":"2021-01-29","priority":2,"num_times_rewatched":0,"rewatch_value":5,"tags":["ignore","tags"],"comments":"ignore comments"}"#;
+        let status: MyListStatus = serde_json::from_str(body).unwrap();
+        assert_eq!(status.status.as_deref(), Some("completed"));
+        assert_eq!(status.score, Some(8));
+        assert_eq!(status.num_episodes_watched, Some(24));
+    }
+
+    #[test]
+    fn parses_float_score_from_mal_response() {
+        let body = r#"{"status":"completed","score":8.0,"num_episodes_watched":24}"#;
+        let status: MyListStatus = serde_json::from_str(body).unwrap();
+        assert_eq!(status.score, Some(8));
+    }
+}

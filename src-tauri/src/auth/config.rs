@@ -6,6 +6,16 @@ pub struct PendingOAuth {
     pub code_verifier: String,
     pub state: String,
     pub redirect_uri: String,
+    #[serde(default)]
+    pub new_account: bool,
+    #[serde(default)]
+    pub account_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct OAuthStartOptions {
+    pub new_account: bool,
+    pub account_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

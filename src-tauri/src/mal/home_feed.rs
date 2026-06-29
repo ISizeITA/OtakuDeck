@@ -1,6 +1,6 @@
 use chrono::{Datelike, Local};
 
-use super::calendar::{airing_today, build_airing_calendar_from_list, continue_watching_entries};
+use super::calendar::{airing_today, build_airing_calendar_from_list, continue_watching_entries, has_new_episode};
 use super::client::MalClient;
 use super::suggestions::compute_suggestions_from_list;
 use super::types::{AnimeListEntry, AnimeNode, AnimeSearchResponse, HomeFeed};
@@ -32,6 +32,11 @@ pub async fn build_home_feed(
 
     let calendar = build_airing_calendar_from_list(cache, token, list).await?;
     let airing_today_entries = airing_today(&calendar);
+    let new_episode_ids: Vec<u64> = calendar
+        .iter()
+        .filter(|entry| has_new_episode(entry))
+        .map(|entry| entry.anime_id)
+        .collect();
 
     let seasonal_resp =
         MalClient::get_seasonal_anime(token, year, &season, SEASONAL_LIMIT, 0).await?;
@@ -44,6 +49,7 @@ pub async fn build_home_feed(
         seasonal: nodes_from_search(seasonal_resp),
         airing_ranking: nodes_from_search(airing_resp),
         airing_today: airing_today_entries,
+        new_episode_ids,
         season_year: year,
         season_name: season,
     })

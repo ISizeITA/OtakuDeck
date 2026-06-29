@@ -1,0 +1,30 @@
+.new-episode-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #121214;
+  background: var(--gradient-accent);
+  border: 1px solid var(--color-accent-border);
+  box-shadow: 0 0 12px rgba(255, 94, 58, 0.35);
+}
+
+.anime-card__cover-wrap .new-episode-badge {
+  position: absolute;
+  top: var(--space-sm);
+  left: var(--space-sm);
+  z-index: 2;
+}
+
+.calendar-item__title-row .new-episode-badge {
+  flex-shrink: 0;
+}
+
+.home-airing-today__item .new-episode-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+}

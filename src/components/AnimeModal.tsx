@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PillButton } from "@/components/PillButton";
 import { useSettings, useTranslation } from "@/context/SettingsContext";
 import { useMalLabels } from "@/hooks/useMalLabels";
@@ -11,6 +11,7 @@ import {
 } from "@/lib/externalLinks";
 import { copyAnimeDeepLink } from "@/lib/deepLink";
 import { openExternal } from "@/lib/openExternal";
+import { invalidateListCache } from "@/lib/listCache";
 import "@/styles/components/modal.css";
 import { recordRecentAnime } from "@/lib/recentAnime";
 import { getCoverUrl, type AnimeNode, type ListStatus } from "@/types/mal";
@@ -144,35 +145,120 @@ export function AnimeModal({ animeId, preview, onClose, onSaved }: AnimeModalPro
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const episodesPersistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const persistListChanges = useCallback(
+    async (
+      nextStatus: ListStatus,
+      nextScore: number,
+      nextEpisodes: number,
+      closeAfter = false,
+    ) => {
+      setSaving(true);
+      setError(null);
+      try {
+        const updated = await api.updateListStatus(
+          animeId,
+          nextStatus,
+          nextScore > 0 ? nextScore : undefined,
+          nextEpisodes,
+          anime?.num_episodes,
+        );
+        setAnime((prev) =>
+          prev
+            ? {
+                ...prev,
+                my_list_status: {
+                  ...prev.my_list_status,
+                  status: updated.status ?? nextStatus,
+                  score: updated.score ?? (nextScore > 0 ? nextScore : undefined),
+                  num_episodes_watched:
+                    updated.num_episodes_watched ?? nextEpisodes,
+                },
+              }
+            : prev,
+        );
+        invalidateListCache();
+        onSaved();
+        if (closeAfter) onClose();
+      } catch (err) {
+        setError(String(err));
+      } finally {
+        setSaving(false);
+      }
+    },
+    [anime?.num_episodes, animeId, onClose, onSaved],
+  );
+
   const handleEpisodesChange = useCallback(
     (value: number) => {
       const total = anime?.num_episodes ?? 0;
+      const nextStatus: ListStatus =
+        total > 0 && value >= total ? "completed" : status;
       setEpisodesWatched(value);
-      if (total > 0 && value >= total) {
-        setStatus("completed");
+      if (nextStatus !== status) setStatus(nextStatus);
+      return nextStatus;
+    },
+    [anime?.num_episodes, status],
+  );
+
+  const persistEpisodes = useCallback(
+    (value: number, nextStatus: ListStatus = status) => {
+      if (loading || saving) return;
+      if (episodesPersistTimer.current) {
+        clearTimeout(episodesPersistTimer.current);
+      }
+      episodesPersistTimer.current = setTimeout(() => {
+        void persistListChanges(nextStatus, score, value);
+      }, 450);
+    },
+    [loading, persistListChanges, saving, score, status],
+  );
+
+  useEffect(
+    () => () => {
+      if (episodesPersistTimer.current) clearTimeout(episodesPersistTimer.current);
+    },
+    [],
+  );
+
+  const handleEpisodeAdjust = useCallback(
+    (value: number) => {
+      const nextStatus = handleEpisodesChange(value);
+      if (!loading && !saving) {
+        void persistListChanges(nextStatus, score, value);
       }
     },
-    [anime?.num_episodes],
+    [handleEpisodesChange, loading, persistListChanges, saving, score],
+  );
+
+  const handleScoreSelect = useCallback(
+    (n: number) => {
+      if (loading || saving) return;
+      const next = n === score ? 0 : n;
+      if (next === score) return;
+      setScore(next);
+      void persistListChanges(status, next, episodesWatched);
+    },
+    [episodesWatched, loading, persistListChanges, saving, score, status],
+  );
+
+  const handleStatusSelect = useCallback(
+    (next: ListStatus) => {
+      if (loading || saving || next === status) return;
+      let nextEpisodes = episodesWatched;
+      if (next === "completed" && anime?.num_episodes && anime.num_episodes > 0) {
+        nextEpisodes = anime.num_episodes;
+        setEpisodesWatched(nextEpisodes);
+      }
+      setStatus(next);
+      void persistListChanges(next, score, nextEpisodes);
+    },
+    [anime?.num_episodes, episodesWatched, loading, persistListChanges, saving, score, status],
   );
 
   const handleSave = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      await api.updateListStatus(
-        animeId,
-        status,
-        score > 0 ? score : undefined,
-        episodesWatched,
-        anime?.num_episodes,
-      );
-      onSaved();
-      onClose();
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setSaving(false);
-    }
+    await persistListChanges(status, score, episodesWatched, true);
   };
 
   const display = anime;
@@ -394,7 +480,8 @@ export function AnimeModal({ animeId, preview, onClose, onSaved }: AnimeModalPro
                       key={opt.value}
                       type="button"
                       className={`modal__status-pill ${status === opt.value ? "modal__status-pill--active" : ""}`}
-                      onClick={() => setStatus(opt.value)}
+                      onClick={() => handleStatusSelect(opt.value)}
+                      disabled={saving}
                     >
                       {opt.label}
                     </button>
@@ -410,8 +497,9 @@ export function AnimeModal({ animeId, preview, onClose, onSaved }: AnimeModalPro
                       type="button"
                       className="modal__episode-btn"
                       onClick={() =>
-                        handleEpisodesChange(Math.max(0, episodesWatched - 1))
+                        handleEpisodeAdjust(Math.max(0, episodesWatched - 1))
                       }
+                      disabled={saving}
                     >
                       −
                     </button>
@@ -422,14 +510,27 @@ export function AnimeModal({ animeId, preview, onClose, onSaved }: AnimeModalPro
                       min={0}
                       max={display.num_episodes || 9999}
                       value={episodesWatched}
-                      onChange={(e) =>
-                        handleEpisodesChange(Math.max(0, parseInt(e.target.value) || 0))
-                      }
+                      onChange={(e) => {
+                        const value = Math.max(0, parseInt(e.target.value) || 0);
+                        const nextStatus = handleEpisodesChange(value);
+                        persistEpisodes(value, nextStatus);
+                      }}
+                      onBlur={() => {
+                        if (loading || saving) return;
+                        const total = display.num_episodes ?? 0;
+                        const nextStatus: ListStatus =
+                          total > 0 && episodesWatched >= total
+                            ? "completed"
+                            : status;
+                        void persistListChanges(nextStatus, score, episodesWatched);
+                      }}
+                      disabled={saving}
                     />
                     <button
                       type="button"
                       className="modal__episode-btn"
-                      onClick={() => handleEpisodesChange(episodesWatched + 1)}
+                      onClick={() => handleEpisodeAdjust(episodesWatched + 1)}
+                      disabled={saving}
                     >
                       +
                     </button>
@@ -447,7 +548,8 @@ export function AnimeModal({ animeId, preview, onClose, onSaved }: AnimeModalPro
                         key={n}
                         type="button"
                         className={`modal__score-pill ${score === n ? "modal__score-pill--active" : ""}`}
-                        onClick={() => setScore(n === score ? 0 : n)}
+                        onClick={() => handleScoreSelect(n)}
+                        disabled={saving}
                       >
                         {n}
                       </button>

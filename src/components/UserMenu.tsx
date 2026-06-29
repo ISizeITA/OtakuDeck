@@ -1,18 +1,41 @@
 import { useEffect, useRef, useState } from "react";
+import { AccountSwitcher } from "@/components/AccountSwitcher";
 import { useTranslation } from "@/context/SettingsContext";
+import type { MalAccountSummary } from "@/types/accounts";
 import "@/styles/components/user-menu.css";
+import "@/styles/components/account-switcher.css";
 
 interface UserMenuProps {
   username: string;
+  accounts: MalAccountSummary[];
+  accountsLoading?: boolean;
+  accountBusyId?: string | null;
   onProfile: () => void;
   onSettings: () => void;
   onLogout: () => void;
+  onSwitchAccount: (accountId: string) => void | Promise<void>;
+  onAddAccount: () => void | Promise<void>;
+  onRemoveAccount: (accountId: string) => void | Promise<void>;
+  onSignInAccount?: (accountId: string) => void | Promise<void>;
 }
 
-export function UserMenu({ username, onProfile, onSettings, onLogout }: UserMenuProps) {
+export function UserMenu({
+  username,
+  accounts,
+  accountsLoading = false,
+  accountBusyId = null,
+  onProfile,
+  onSettings,
+  onLogout,
+  onSwitchAccount,
+  onAddAccount,
+  onRemoveAccount,
+  onSignInAccount,
+}: UserMenuProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const showAccounts = accounts.length > 0 || accountsLoading;
 
   useEffect(() => {
     if (!open) return;
@@ -59,6 +82,21 @@ export function UserMenu({ username, onProfile, onSettings, onLogout }: UserMenu
 
       {open && (
         <div className="user-menu__dropdown" role="menu">
+          {showAccounts && (
+            <div className="user-menu__accounts">
+              <p className="user-menu__accounts-title">{t("accounts.title")}</p>
+              <AccountSwitcher
+                compact
+                accounts={accounts}
+                loading={accountsLoading}
+                busyId={accountBusyId}
+                onSwitch={onSwitchAccount}
+                onAdd={onAddAccount}
+                onRemove={onRemoveAccount}
+                onSignIn={onSignInAccount}
+              />
+            </div>
+          )}
           <button
             type="button"
             className="user-menu__item"

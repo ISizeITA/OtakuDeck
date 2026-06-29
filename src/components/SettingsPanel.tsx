@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
+import { AccountSwitcher } from "@/components/AccountSwitcher";
 import { FilterChips } from "@/components/FilterChips";
 import { PillButton } from "@/components/PillButton";
 import { ShortcutRecorder } from "@/components/ShortcutRecorder";
 import { TranslateSettings } from "@/components/TranslateSettings";
 import { useSettings } from "@/context/SettingsContext";
 import { useUpdate } from "@/context/UpdateContext";
+import { useAuth } from "@/hooks/useAuth";
 import type { LanguagePreference } from "@/context/SettingsContext";
 import { api } from "@/lib/api";
 import type { AppPreferences } from "@/types/mal";
@@ -31,15 +33,26 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     updateAvailable,
     checking,
     installing,
+    installProgress,
     installError,
     checkError,
     changelog,
     checkForUpdates,
     applyUpdate,
   } = useUpdate();
+  const {
+    accounts,
+    accountsLoading,
+    accountBusyId,
+    switchAccount,
+    addAccount,
+    removeAccount,
+    login,
+  } = useAuth();
   const [prefs, setPrefs] = useState<AppPreferences>({
     episode_notifications: false,
     show_streaming_search_links: false,
+    episode_reminder_minutes: 30,
   });
   const [prefsLoading, setPrefsLoading] = useState(true);
 
@@ -82,6 +95,19 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     }
   };
 
+  const saveReminderMinutes = async (minutes: number) => {
+    const next = { ...prefs, episode_reminder_minutes: minutes };
+    setPrefs(next);
+    try {
+      await api.saveAppPreferences(next);
+      if (next.episode_notifications) {
+        await api.getAiringCalendar(true);
+      }
+    } catch {
+      setPrefs(prefs);
+    }
+  };
+
   return (
     <div className="settings-overlay" onClick={onClose} role="presentation">
       <div
@@ -105,6 +131,21 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
         </header>
 
         <div className="settings-panel__body">
+          {(accounts.length > 0 || accountsLoading) && (
+            <section className="settings-section">
+              <h3 className="settings-section__title">{t("accounts.title")}</h3>
+              <AccountSwitcher
+                accounts={accounts}
+                loading={accountsLoading}
+                busyId={accountBusyId}
+                onSwitch={switchAccount}
+                onAdd={addAccount}
+                onRemove={removeAccount}
+                onSignIn={(id) => login({ accountId: id })}
+              />
+            </section>
+          )}
+
           <section className="settings-section">
             <h3 className="settings-section__title">{t("settings.appearance")}</h3>
 
@@ -188,6 +229,31 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                 </span>
               </button>
             </div>
+            {prefs.episode_notifications && (
+              <div className="settings-row settings-row--stacked">
+                <div className="settings-row__info">
+                  <span className="settings-row__label">
+                    {t("settings.episodeReminderMinutes")}
+                  </span>
+                  <span className="settings-row__hint">
+                    {t("settings.episodeReminderMinutesHint", {
+                      minutes: prefs.episode_reminder_minutes ?? 30,
+                    })}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  className="settings-range"
+                  min={5}
+                  max={120}
+                  step={5}
+                  value={prefs.episode_reminder_minutes ?? 30}
+                  disabled={prefsLoading}
+                  aria-label={t("settings.episodeReminderMinutes")}
+                  onChange={(e) => void saveReminderMinutes(Number(e.target.value))}
+                />
+              </div>
+            )}
           </section>
 
           <section className="settings-section">
@@ -244,7 +310,9 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                     disabled={installing}
                     onClick={() => void applyUpdate()}
                   >
-                    {installing ? t("update.installing") : t("update.action")}
+                    {installing
+                      ? t("update.installing", { percent: installProgress })
+                      : t("update.action")}
                   </PillButton>
                 )}
               </div>

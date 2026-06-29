@@ -1,17 +1,23 @@
 {
-  "version": "0.1.5",
-  "released_at": "2026-06-26",
-  "release_url": "https://github.com/ISizeITA/OtakuDeck/releases/tag/v0.1.5",
+  "version": "0.1.6",
+  "released_at": "2026-06-29",
+  "release_url": "https://github.com/ISizeITA/OtakuDeck/releases/tag/v0.1.6",
   "changelog": [
-    "Release di prova per test aggiornamento automatico",
-    "Nessuna novità funzionale — solo verifica installazione da v0.1.4"
+    "Multi-account MAL: aggiungi, cambia e rimuovi account",
+    "Badge nuovo episodio su card, home e calendario",
+    "Refresh visibile, pull-to-refresh e stato cache offline",
+    "Ricerca migliorata con filtri rapidi e fuzzy matching",
+    "Salvataggio automatico stato lista anime su MAL",
+    "Fix filtri genere in Archivio (502/400) e paginazione",
+    "Widget Android: tap apre anime e refresh periodico",
+    "Slider minuti promemoria notifiche in Impostazioni"
   ],
   "platforms": {
     "windows": {
-      "download_url": "https://github.com/ISizeITA/OtakuDeck/releases/download/v0.1.5/OtakuDeck_0.1.5_x64-setup.exe"
+      "download_url": "https://github.com/ISizeITA/OtakuDeck/releases/download/v0.1.6/OtakuDeck_0.1.6_x64-setup.exe"
     },
     "android": {
-      "download_url": "https://github.com/ISizeITA/OtakuDeck/releases/download/v0.1.5/OtakuDeck-universal-release.apk"
+      "download_url": "https://github.com/ISizeITA/OtakuDeck/releases/download/v0.1.6/OtakuDeck-universal-release.apk"
     }
   }
 }

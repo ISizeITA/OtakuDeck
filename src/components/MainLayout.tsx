@@ -4,6 +4,7 @@ import "@/styles/components/nav.css";
 import { OtakuDeckLogo } from "@/components/OtakuDeckLogo";
 import { PillNav } from "@/components/PillNav";
 import { PullToRefresh } from "@/components/PullToRefresh";
+import { RefreshButton } from "@/components/RefreshButton";
 import { ScrollToTop } from "@/components/ScrollToTop";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { UserMenu } from "@/components/UserMenu";
@@ -22,9 +23,18 @@ interface MainLayoutProps {
 }
 
 export function MainLayout({ activeTab, onTabChange, children }: MainLayoutProps) {
-  const { logout } = useAuth();
+  const {
+    logout,
+    accounts,
+    accountsLoading,
+    accountBusyId,
+    switchAccount,
+    addAccount,
+    removeAccount,
+    login,
+  } = useAuth();
   const { t } = useSettings();
-  const { triggerRefresh } = useRefresh();
+  const { triggerRefresh, isRefreshing } = useRefresh();
   const [username, setUsername] = useState(t("user.profile"));
   const [showSettings, setShowSettings] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -39,12 +49,14 @@ export function MainLayout({ activeTab, onTabChange, children }: MainLayoutProps
   const showScrollToTop =
     activeTab === "archive" || activeTab === "list" || activeTab === "calendar";
 
+  const activeAccountId = accounts.find((a) => a.is_active)?.id;
+
   useEffect(() => {
     api
       .getUserProfile()
       .then((profile) => setUsername(profile.data.name))
       .catch(() => setUsername(t("user.profile")));
-  }, [t]);
+  }, [t, activeAccountId]);
 
   useEffect(() => {
     api.getPlatform().then((p) => setIsMobile(p === "mobile")).catch(() => {});
@@ -79,6 +91,7 @@ export function MainLayout({ activeTab, onTabChange, children }: MainLayoutProps
         </div>
         <PillNav activeTab={activeTab} onTabChange={onTabChange} />
         <div className="main-header__actions">
+          <RefreshButton />
           {isMobile && (
             <button
               type="button"
@@ -96,19 +109,24 @@ export function MainLayout({ activeTab, onTabChange, children }: MainLayoutProps
           )}
           <UserMenu
             username={username}
+            accounts={accounts}
+            accountsLoading={accountsLoading}
+            accountBusyId={accountBusyId}
             onProfile={() => setShowProfile(true)}
             onSettings={() => setShowSettings(true)}
             onLogout={logout}
+            onSwitchAccount={switchAccount}
+            onAddAccount={addAccount}
+            onRemoveAccount={removeAccount}
+            onSignInAccount={(id) => login({ accountId: id })}
           />
         </div>
       </header>
       <PullToRefresh
         enabled={isMobile}
         containerRef={mainRef}
-        onRefresh={async () => {
-          triggerRefresh();
-          await new Promise((r) => setTimeout(r, 400));
-        }}
+        refreshing={isRefreshing}
+        onRefresh={triggerRefresh}
       >
         <main ref={mainRef} className="main-content">
           {children}

@@ -1,10 +1,18 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{AppHandle, Emitter, Manager};
 
 pub const DEFAULT_MANIFEST_URL: &str =
     "https://raw.githubusercontent.com/ISizeITA/OtakuDeck/main/updates/manifest.json";
+
+pub const UPDATE_INSTALL_PROGRESS: &str = "update-install-progress";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateInstallProgress {
+    pub phase: String,
+    pub percent: u8,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateManifest {
@@ -148,9 +156,18 @@ pub fn filename_from_url(url: &str) -> String {
         .to_string()
 }
 
-pub async fn download_update(url: &str) -> Result<Vec<u8>, String> {
+pub async fn download_update_to_file(
+    app: &AppHandle,
+    url: &str,
+    path: &Path,
+) -> Result<(), String> {
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    emit_install_progress(app, "download", 0);
+
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(180))
+        .timeout(std::time::Duration::from_secs(300))
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -164,17 +181,40 @@ pub async fn download_update(url: &str) -> Result<Vec<u8>, String> {
         return Err(format!("Download HTTP {}", response.status()));
     }
 
-    response
-        .bytes()
+    let total = response.content_length().unwrap_or(0);
+    let mut downloaded: u64 = 0;
+    let mut file = tokio::fs::File::create(path)
         .await
-        .map(|b| b.to_vec())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+        downloaded += chunk.len() as u64;
+        let percent = if total > 0 {
+            ((downloaded.saturating_mul(100)) / total).min(100) as u8
+        } else {
+            0
+        };
+        emit_install_progress(app, "download", percent);
+    }
+
+    emit_install_progress(app, "download", 100);
+    Ok(())
 }
 
-pub async fn save_and_install_update(
-    app: &tauri::AppHandle,
-    url: &str,
-) -> Result<(), String> {
+fn emit_install_progress(app: &AppHandle, phase: &str, percent: u8) {
+    let _ = app.emit(
+        UPDATE_INSTALL_PROGRESS,
+        UpdateInstallProgress {
+            phase: phase.to_string(),
+            percent,
+        },
+    );
+}
+
+pub async fn save_and_install_update(app: &AppHandle, url: &str) -> Result<(), String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let update_dir = dir.join("updates");
     std::fs::create_dir_all(&update_dir).map_err(|e| e.to_string())?;
@@ -182,12 +222,13 @@ pub async fn save_and_install_update(
     let filename = filename_from_url(url);
     let path = update_dir.join(filename);
 
-    let bytes = download_update(url).await?;
-    if bytes.is_empty() {
+    download_update_to_file(app, url, &path).await?;
+
+    if path.metadata().map(|m| m.len()).unwrap_or(0) == 0 {
         return Err("empty update file".into());
     }
 
-    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    emit_install_progress(app, "install", 100);
 
     #[cfg(mobile)]
     {
@@ -200,7 +241,8 @@ pub async fn save_and_install_update(
 
     #[cfg(all(not(mobile), windows))]
     {
-        launch_windows_installer(&path)?;
+        let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
+        launch_windows_installer_with_relaunch(&path, &exe_path)?;
         app.exit(0);
         return Ok(());
     }
@@ -216,25 +258,44 @@ pub async fn save_and_install_update(
 }
 
 #[cfg(windows)]
-fn launch_windows_installer(path: &Path) -> Result<(), String> {
+fn launch_windows_installer_with_relaunch(installer: &Path, exe: &Path) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
 
-    let ext = path
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let script_dir = installer
+        .parent()
+        .ok_or_else(|| "invalid installer path".to_string())?;
+    let script_path = script_dir.join("apply-update.cmd");
+
+    let ext = installer
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or("");
 
-    let spawn_result = if ext.eq_ignore_ascii_case("msi") {
-        Command::new("msiexec")
-            .args(["/i"])
-            .arg(path)
-            .args(["/passive", "/norestart"])
-            .spawn()
+    let script = if ext.eq_ignore_ascii_case("msi") {
+        format!(
+            "@echo off\r\nstart /wait msiexec /i \"{}\" /passive /norestart\r\nstart \"\" \"{}\"\r\n",
+            installer.display(),
+            exe.display(),
+        )
     } else {
-        Command::new(path).arg("/S").spawn()
+        format!(
+            "@echo off\r\nstart /wait \"\" \"{}\" /S\r\nstart \"\" \"{}\"\r\n",
+            installer.display(),
+            exe.display(),
+        )
     };
 
-    spawn_result.map_err(|e| format!("Failed to start installer: {e}"))?;
+    std::fs::write(&script_path, script).map_err(|e| e.to_string())?;
+
+    Command::new("cmd")
+        .args(["/C", script_path.to_str().unwrap_or("")])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|e| format!("Failed to start update script: {e}"))?;
+
     Ok(())
 }
 

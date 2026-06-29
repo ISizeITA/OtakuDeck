@@ -9,10 +9,12 @@ import type {
   AppPreferences,
   HomeFeed,
   ListStatus,
+  MyListStatus,
   SearchAnimeParams,
   UpdateUserProfileRequest,
   UserProfile,
 } from "@/types/mal";
+import type { MalAccountSummary } from "@/types/accounts";
 import type { AuthSession } from "@/hooks/useAuth";
 import type { TranslateConfig, MyMemoryQuota } from "@/lib/api.types";
 import type { UpdateCheckResult } from "@/types/updates";
@@ -21,6 +23,16 @@ export type { TranslateConfig, MyMemoryQuota, TranslateProvider } from "@/lib/ap
 
 export const api = {
   getSession: () => invoke<AuthSession | null>("get_auth_session"),
+  listMalAccounts: () => invoke<MalAccountSummary[]>("list_mal_accounts"),
+  switchMalAccount: (accountId: string) =>
+    invoke<void>("switch_mal_account", { accountId }),
+  removeMalAccount: (accountId: string) =>
+    invoke<void>("remove_mal_account", { accountId }),
+  startOAuthLogin: (newAccount?: boolean, accountId?: string) =>
+    invoke<void>("start_oauth_login", {
+      newAccount: newAccount ?? false,
+      accountId: accountId ?? null,
+    }),
   logout: () => invoke<void>("logout"),
   getPlatform: () => invoke<string>("get_platform"),
   searchAnime: (params: SearchAnimeParams) =>
@@ -84,7 +96,7 @@ export const api = {
     numWatchedEpisodes?: number,
     totalEpisodes?: number,
   ) =>
-    invoke("update_anime_list_status", {
+    invoke<MyListStatus>("update_anime_list_status", {
       animeId,
       status,
       score,

@@ -93,29 +93,28 @@ impl MalClient {
         token: &str,
         params: &SearchAnimeParams,
     ) -> Result<AnimeSearchResponse, MalError> {
+        let user_has_text_query = params
+            .query
+            .as_ref()
+            .map(|q| q.trim().len() >= 3)
+            .unwrap_or(false);
+
+        // MAL `/anime` requires `q` — genre-only filters use ranking browse + client AND.
+        if !user_has_text_query && !parse_genre_ids(params.genres.as_deref().unwrap_or("")).is_empty()
+        {
+            return Self::browse_via_ranking(token, params).await;
+        }
+
         let mut query_text = params
             .query
             .as_ref()
             .map(|q| q.trim().to_string())
             .filter(|q| !q.is_empty());
 
-        // MAL richiede q con min 3 caratteri su GET /anime — usa il nome genere se serve
+        // MAL richiede q con min 3 caratteri su GET /anime — usa il primo genere come query
         if query_text.as_ref().map(|q| q.len()).unwrap_or(0) < 3 {
-            if let Some(ref genres) = params.genres {
-                let ids = parse_genre_ids(genres);
-                if ids.len() == 1 {
-                    if let Some(name) = genre_id_to_name(ids[0]) {
-                        query_text = Some(name.to_string());
-                    }
-                }
-            }
-        }
-
-        if query_text.as_ref().map(|q| q.len()).unwrap_or(0) < 3 {
-            if let Some(ref media_type) = params.media_type {
-                if let Some(q) = search_query_for_media_type(media_type) {
-                    query_text = Some(q);
-                }
+            if let Some(q) = fallback_query_from_params(params) {
+                query_text = Some(q);
             }
         }
 
@@ -144,40 +143,11 @@ impl MalClient {
         ];
 
         if let Some(g) = &params.genres {
-            let ids = parse_genre_ids(g);
-            if !ids.is_empty() {
-                let api_genres = ids
-                    .iter()
-                    .take(2)
-                    .map(|id| id.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",");
-                query.push(("genres", api_genres));
+            if let Some(genres) = mal_genres_api_param(g) {
+                query.push(("genres", genres));
             }
         }
-        if let Some(t) = &params.media_type {
-            if !t.is_empty() {
-                query.push(("type", t.clone()));
-            }
-        }
-        if let Some(s) = &params.status {
-            query.push(("status", s.clone()));
-        }
-        if let Some(sort) = &params.sort {
-            query.push(("sort", sort.clone()));
-        }
-        if let Some(order) = &params.order {
-            query.push(("order", order.clone()));
-        }
-        if let Some(ms) = params.min_score {
-            query.push(("min_score", ms.to_string()));
-        }
-        if let Some(sd) = &params.start_date {
-            query.push(("start_date", sd.clone()));
-        }
-        if let Some(ed) = &params.end_date {
-            query.push(("end_date", ed.clone()));
-        }
+        push_anime_search_filters(&mut query, params);
 
         let mut resp: AnimeSearchResponse = Self::get(token, "/anime", &query).await?;
         apply_client_filters(&mut resp, params);
@@ -209,12 +179,23 @@ impl MalClient {
         let mut matched_seen = 0usize;
         let mut ranking_offset = 0u32;
         let batch_size = 100u32;
+        /// ~10k entries per request; MAL has ~20k+ ranked anime total.
+        const MAX_BROWSE_BATCHES: u32 = 100;
 
-        let mut has_more_pages = false;
+        let mut batches = 0u32;
+        let mut exhausted_ranking = false;
 
         loop {
-            let mut resp =
-                Self::get_anime_ranking(token, ranking_type, batch_size, ranking_offset).await?;
+            batches += 1;
+
+            let mut resp = Self::get_anime_ranking_with_fields(
+                token,
+                ranking_type,
+                batch_size,
+                ranking_offset,
+                ANIME_CARD_FIELDS,
+            )
+            .await?;
             let has_next = resp
                 .paging
                 .as_ref()
@@ -236,18 +217,24 @@ impl MalClient {
             }
 
             if collected.len() >= limit {
-                has_more_pages = has_next;
                 break;
             }
             if !has_next {
+                exhausted_ranking = true;
+                break;
+            }
+            if batches >= MAX_BROWSE_BATCHES {
                 break;
             }
             ranking_offset += batch_size;
         }
 
+        let result_len = collected.len();
         Ok(AnimeSearchResponse {
             data: collected,
-            paging: if has_more_pages {
+            paging: if !exhausted_ranking
+                && (result_len >= limit || batches >= MAX_BROWSE_BATCHES)
+            {
                 Some(Paging {
                     previous: None,
                     next: Some("more".to_string()),
@@ -394,13 +381,51 @@ impl MalClient {
             form.insert("num_watched_episodes", ep.to_string());
         }
 
+        if form.is_empty() {
+            return Err(MalError::Api(
+                "Nessun campo da aggiornare nella lista.".to_string(),
+            ));
+        }
+
+        Self::put_form(token, &format!("/anime/{anime_id}/my_list_status"), &form).await
+    }
+
+    async fn put_form(
+        token: &str,
+        path: &str,
+        form: &HashMap<&str, String>,
+    ) -> Result<MyListStatus, MalError> {
+        let mut attempt = 0u32;
+        loop {
+            match Self::put_form_once(token, path, form).await {
+                Ok(value) => return Ok(value),
+                Err(err) if err.is_retryable() && attempt < MAX_RETRIES => {
+                    attempt += 1;
+                    let delay = Duration::from_millis(1200 * 2u64.pow(attempt - 1));
+                    tokio::time::sleep(delay).await;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    async fn put_form_once(
+        token: &str,
+        path: &str,
+        form: &HashMap<&str, String>,
+    ) -> Result<MyListStatus, MalError> {
+        let _permit = MAL_SEMAPHORE
+            .acquire()
+            .await
+            .map_err(|_| MalError::Api("MAL request queue closed".to_string()))?;
+
         let client_id = auth::mal_client_id().map_err(MalError::Config)?;
 
         let response = HTTP
-            .put(format!("{MAL_API_BASE}/anime/{anime_id}/my_list_status"))
+            .patch(format!("{MAL_API_BASE}{path}"))
             .header("Authorization", format!("Bearer {token}"))
             .header("X-MAL-CLIENT-ID", client_id)
-            .form(&form)
+            .form(form)
             .send()
             .await?;
 
@@ -564,6 +589,24 @@ fn search_query_for_media_type(media_type: &str) -> Option<String> {
     }
 }
 
+/// MAL `/anime` requires `q` with at least 3 characters. When the user filters by genre
+/// without typing a query, anchor the search on the first selected genre name.
+fn fallback_query_from_params(params: &SearchAnimeParams) -> Option<String> {
+    if let Some(ref genres) = params.genres {
+        let ids = parse_genre_ids(genres);
+        if let Some(&first) = ids.first() {
+            if let Some(name) = genre_id_to_name(first) {
+                return Some(name.to_string());
+            }
+        }
+    }
+
+    params
+        .media_type
+        .as_deref()
+        .and_then(search_query_for_media_type)
+}
+
 fn needs_filtered_browse(params: &SearchAnimeParams) -> bool {
     !parse_genre_ids(params.genres.as_deref().unwrap_or("")).is_empty()
         || !parse_genre_ids(params.exclude_genres.as_deref().unwrap_or("")).is_empty()
@@ -667,6 +710,47 @@ fn parse_genre_ids(genres: &str) -> Vec<u64> {
         .collect()
 }
 
+/// MAL accepts at most 2 genre IDs on `/anime`, combined with AND semantics.
+fn mal_genres_api_param(genres: &str) -> Option<String> {
+    let ids = parse_genre_ids(genres);
+    if ids.is_empty() {
+        return None;
+    }
+    Some(
+        ids.iter()
+            .take(2)
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+    )
+}
+
+fn push_anime_search_filters(query: &mut Vec<(&str, String)>, params: &SearchAnimeParams) {
+    if let Some(t) = &params.media_type {
+        if !t.is_empty() {
+            query.push(("type", t.clone()));
+        }
+    }
+    if let Some(s) = &params.status {
+        query.push(("status", s.clone()));
+    }
+    if let Some(sort) = &params.sort {
+        query.push(("sort", sort.clone()));
+    }
+    if let Some(order) = &params.order {
+        query.push(("order", order.clone()));
+    }
+    if let Some(ms) = params.min_score {
+        query.push(("min_score", ms.to_string()));
+    }
+    if let Some(sd) = &params.start_date {
+        query.push(("start_date", sd.clone()));
+    }
+    if let Some(ed) = &params.end_date {
+        query.push(("end_date", ed.clone()));
+    }
+}
+
 fn genre_id_to_name(id: u64) -> Option<&'static str> {
     GENRE_NAMES
         .iter()
@@ -754,3 +838,103 @@ const GENRE_NAMES: &[(u64, &str)] = &[
     (82, "Urban Fantasy"),
     (83, "Villainess"),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_query_uses_first_genre_for_multi_select() {
+        let params = SearchAnimeParams {
+            genres: Some("1,22".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            fallback_query_from_params(&params).as_deref(),
+            Some("Action")
+        );
+    }
+
+    #[test]
+    fn fallback_query_single_genre() {
+        let params = SearchAnimeParams {
+            genres: Some("22".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            fallback_query_from_params(&params).as_deref(),
+            Some("Romance")
+        );
+    }
+
+    #[test]
+    fn needs_filtered_browse_true_with_genres() {
+        let params = SearchAnimeParams {
+            genres: Some("1,22".to_string()),
+            ..Default::default()
+        };
+        assert!(needs_filtered_browse(&params));
+    }
+
+    fn anime_with_genres(id: u64, genre_ids: &[u64]) -> AnimeSearchNode {
+        AnimeSearchNode {
+            node: AnimeNode {
+                id,
+                title: format!("Anime {id}"),
+                main_picture: None,
+                alternative_titles: None,
+                mean: None,
+                rank: None,
+                popularity: None,
+                num_episodes: None,
+                media_type: None,
+                status: None,
+                synopsis: None,
+                start_date: None,
+                end_date: None,
+                genres: Some(
+                    genre_ids
+                        .iter()
+                        .map(|&gid| Genre {
+                            id: gid,
+                            name: genre_id_to_name(gid).unwrap_or("?").to_string(),
+                        })
+                        .collect(),
+                ),
+                my_list_status: None,
+                num_list_users: None,
+                studios: None,
+                source: None,
+                broadcast: None,
+            },
+        }
+    }
+
+    #[test]
+    fn mal_genres_api_param_caps_at_two_ids() {
+        assert_eq!(mal_genres_api_param("10,9"), Some("10,9".to_string()));
+        assert_eq!(mal_genres_api_param("1,4,27"), Some("1,4".to_string()));
+        assert_eq!(mal_genres_api_param(""), None);
+    }
+
+    #[test]
+    fn apply_client_filters_and_logic_for_multiple_genres() {
+        let mut resp = AnimeSearchResponse {
+            data: vec![
+                anime_with_genres(1, &[1, 4]),
+                anime_with_genres(2, &[1]),
+                anime_with_genres(3, &[1, 4, 27]),
+                anime_with_genres(4, &[4]),
+            ],
+            paging: None,
+        };
+        let params = SearchAnimeParams {
+            genres: Some("1,4".to_string()),
+            ..Default::default()
+        };
+        apply_client_filters(&mut resp, &params);
+        assert_eq!(resp.data.len(), 2);
+        assert_eq!(resp.data[0].node.id, 1);
+        assert_eq!(resp.data[1].node.id, 3);
+    }
+}

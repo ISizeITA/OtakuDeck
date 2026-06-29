@@ -1,6 +1,6 @@
 [package]
 name = "otakudeck"
-version = "0.1.5"
+version = "0.1.6"
 description = "Cross-platform MyAnimeList client"
 authors = ["OtakuDeck"]
 edition = "2021"
@@ -21,8 +21,9 @@ tauri-plugin-notification = "2"
 time = { version = "0.3", features = ["local-offset"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 tokio = { version = "1", features = ["full"] }
+futures-util = "0.3"
 rand = "0.8"
 url = "2"
 thiserror = "2"

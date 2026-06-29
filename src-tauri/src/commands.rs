@@ -1,6 +1,7 @@
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::auth::AuthSession;
+use crate::accounts::MalAccountSummary;
+use crate::auth::{AuthSession, OAuthStartOptions};
 use crate::AppState;
 use crate::mal::calendar::{airing_today, build_airing_calendar, continue_watching_entries};
 use crate::mal::home_feed::build_home_feed;
@@ -19,7 +20,28 @@ use crate::preferences::{
 use crate::cover_cache;
 use crate::widget::sync_airing_widget;
 
+async fn ensure_active_account(state: &State<'_, AppState>) -> Result<(), String> {
+    let active_id = {
+        let accounts = state.accounts.lock().await;
+        accounts.active_account_id()
+    };
+    let Some(active_id) = active_id else {
+        return Ok(());
+    };
+
+    let needs_switch = {
+        let auth = state.auth.lock().await;
+        auth.bound_account_id() != Some(active_id.as_str())
+    };
+
+    if needs_switch {
+        switch_account_context(state, &active_id).await?;
+    }
+    Ok(())
+}
+
 async fn get_token(state: &State<'_, AppState>) -> Result<String, String> {
+    ensure_active_account(state).await?;
     let mut auth = state.auth.lock().await;
     auth.ensure_valid_token()
         .await
@@ -65,12 +87,14 @@ where
 {
     match fetch().await {
         Ok(data) => {
-            let _ = state.cache.set(key, &data);
-            Ok(fresh_response(&state.cache, key, data))
+            let cache = state.cache.lock().await;
+            let _ = cache.set(key, &data);
+            Ok(fresh_response(&cache, key, data))
         }
         Err(err) => {
-            if let Some(cached) = state.cache.get::<T>(key) {
-                Ok(cached_response(&state.cache, key, ttl_secs, cached))
+            let cache = state.cache.lock().await;
+            if let Some(cached) = cache.get::<T>(key) {
+                Ok(cached_response(&cache, key, ttl_secs, cached))
             } else {
                 Err(err)
             }
@@ -91,12 +115,67 @@ where
     Fut: std::future::Future<Output = Result<T, String>>,
 {
     if !force_refresh {
-        if let Some(cached) = state.cache.get_if_fresh::<T>(key, ttl_secs) {
-            return Ok(cached_response(&state.cache, key, ttl_secs, cached));
+        let cache = state.cache.lock().await;
+        if let Some(cached) = cache.get_if_fresh::<T>(key, ttl_secs) {
+            return Ok(cached_response(&cache, key, ttl_secs, cached));
         }
     }
 
     with_cache(state, key, ttl_secs, fetch).await
+}
+
+async fn switch_account_context(state: &State<'_, AppState>, account_id: &str) -> Result<(), String> {
+    {
+        let mut auth = state.auth.lock().await;
+        auth.bind_account(account_id);
+    }
+    let cache_dir = {
+        let accounts = state.accounts.lock().await;
+        accounts.account_cache_dir(account_id)
+    };
+    {
+        let mut cache = state.cache.lock().await;
+        *cache = crate::cache::DataCache::new(cache_dir);
+    }
+    Ok(())
+}
+
+async fn finalize_oauth_login(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    oauth_opts: OAuthStartOptions,
+) -> Result<String, String> {
+    let session = {
+        let mut auth = state.auth.lock().await;
+        auth.get_session()
+            .ok_or_else(|| "Sessione OAuth non disponibile.".to_string())?
+    };
+
+    let profile = MalClient::get_user_profile(&session.access_token)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let account_id = {
+        let mut accounts = state.accounts.lock().await;
+        accounts.upsert_from_profile(
+            &profile,
+            oauth_opts.new_account,
+            oauth_opts.account_id.as_deref(),
+        )?
+    };
+
+    {
+        let mut auth = state.auth.lock().await;
+        auth.relocate_session_to_account(&account_id)
+            .map_err(|e| e.to_string())?;
+    }
+
+    switch_account_context(state, &account_id).await?;
+
+    let _ = app.emit("account-switched", &account_id);
+    let _ = app.emit("auth-success", &session);
+
+    Ok(account_id)
 }
 
 #[tauri::command]
@@ -106,12 +185,85 @@ pub async fn complete_oauth_login(
     code: String,
     oauth_state: String,
 ) -> Result<(), String> {
-    let mut auth = state.auth.lock().await;
+    {
+        let mut auth = state.auth.lock().await;
+        if let Err(err) = auth.complete_oauth(app.clone(), code, oauth_state).await {
+            let message = err.to_string();
+            let _ = app.emit("auth-error", &message);
+            return Err(message);
+        }
+    }
 
-    if let Err(err) = auth.complete_oauth(app.clone(), code, oauth_state).await {
-        let message = err.to_string();
-        let _ = app.emit("auth-error", &message);
-        return Err(message);
+    let oauth_opts = {
+        let mut auth = state.auth.lock().await;
+        auth.take_oauth_context()
+    };
+
+    finalize_oauth_login(&app, &state, oauth_opts).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn list_mal_accounts(
+    state: State<'_, AppState>,
+) -> Result<Vec<MalAccountSummary>, String> {
+    let accounts = state.accounts.lock().await;
+    Ok(accounts.list_summaries())
+}
+
+#[tauri::command]
+pub async fn switch_mal_account(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<(), String> {
+    {
+        let mut accounts = state.accounts.lock().await;
+        accounts.set_active(&account_id)?;
+    }
+
+    switch_account_context(&state, &account_id).await?;
+
+    let has_session = {
+        let mut auth = state.auth.lock().await;
+        auth.get_session().is_some()
+    };
+
+    if !has_session {
+        return Err(
+            "Sessione scaduta per questo account. Accedi di nuovo con MyAnimeList.".to_string(),
+        );
+    }
+
+    let _ = app.emit("account-switched", &account_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn remove_mal_account(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<(), String> {
+    let next_active = {
+        let mut accounts = state.accounts.lock().await;
+        accounts.remove_account(&account_id)?
+    };
+
+    if let Some(next_id) = next_active {
+        switch_account_context(&state, &next_id).await?;
+        let _ = app.emit("account-switched", &next_id);
+    } else {
+        let mut auth = state.auth.lock().await;
+        auth.use_legacy_session_path();
+        auth.logout().map_err(|e| e.to_string())?;
+        let fallback = {
+            let accounts = state.accounts.lock().await;
+            accounts.app_data_dir().join("cache")
+        };
+        let mut cache = state.cache.lock().await;
+        *cache = crate::cache::DataCache::new(fallback);
+        let _ = app.emit("account-switched", "");
     }
 
     Ok(())
@@ -148,13 +300,26 @@ pub fn get_auth_config() -> serde_json::Value {
 pub async fn start_oauth_login(
     app: AppHandle,
     state: State<'_, AppState>,
+    new_account: Option<bool>,
+    account_id: Option<String>,
 ) -> Result<(), String> {
-    let mut auth = state.auth.lock().await;
+    let oauth_opts = OAuthStartOptions {
+        new_account: new_account.unwrap_or(false),
+        account_id: account_id.clone(),
+    };
 
-    if let Err(err) = auth.start_oauth(app.clone()).await {
-        let message = err.to_string();
-        let _ = app.emit("auth-error", &message);
-        return Err(message);
+    {
+        let mut auth = state.auth.lock().await;
+        if let Err(err) = auth.start_oauth(app.clone(), oauth_opts.clone()).await {
+            let message = err.to_string();
+            let _ = app.emit("auth-error", &message);
+            return Err(message);
+        }
+    }
+
+    #[cfg(not(mobile))]
+    {
+        finalize_oauth_login(&app, &state, oauth_opts).await?;
     }
 
     Ok(())
@@ -189,21 +354,23 @@ pub async fn get_anime_details(
     id: u64,
 ) -> Result<AnimeNode, String> {
     let key = format!("anime_detail_{id}");
-    if let Some(cached) = state
-        .cache
-        .get_if_fresh::<AnimeNode>(&key, HOME_FEED_CACHE_TTL_SECS)
     {
-        return Ok(cached);
+        let cache = state.cache.lock().await;
+        if let Some(cached) = cache.get_if_fresh::<AnimeNode>(&key, HOME_FEED_CACHE_TTL_SECS) {
+            return Ok(cached);
+        }
     }
 
     let token = get_token(&state).await?;
     match MalClient::get_anime_details(&token, id).await {
         Ok(detail) => {
-            let _ = state.cache.set(&key, &detail);
+            let cache = state.cache.lock().await;
+            let _ = cache.set(&key, &detail);
             Ok(detail)
         }
         Err(err) => {
-            if let Some(cached) = state.cache.get::<AnimeNode>(&key) {
+            let cache = state.cache.lock().await;
+            if let Some(cached) = cache.get::<AnimeNode>(&key) {
                 Ok(cached)
             } else {
                 Err(err.to_string())
@@ -284,12 +451,12 @@ pub async fn get_user_animelist_all(
     let force = force_refresh.unwrap_or(false);
 
     if !force {
-        if let Some(cached) = state
-            .cache
-            .get_if_fresh::<Vec<AnimeListEntry>>("animelist_all", ANIMELIST_CACHE_TTL_SECS)
+        let cache = state.cache.lock().await;
+        if let Some(cached) =
+            cache.get_if_fresh::<Vec<AnimeListEntry>>("animelist_all", ANIMELIST_CACHE_TTL_SECS)
         {
             return Ok(cached_response(
-                &state.cache,
+                &cache,
                 "animelist_all",
                 ANIMELIST_CACHE_TTL_SECS,
                 cached,
@@ -323,7 +490,8 @@ pub async fn get_user_animelist_all(
 
     match fetch_result {
         Ok(data) => {
-            let _ = state.cache.set("animelist_all", &data);
+            let cache = state.cache.lock().await;
+            let _ = cache.set("animelist_all", &data);
             let _ = app.emit(
                 "animelist-load-progress",
                 AnimelistLoadProgress {
@@ -332,10 +500,11 @@ pub async fn get_user_animelist_all(
                     done: true,
                 },
             );
-            Ok(fresh_response(&state.cache, "animelist_all", data))
+            Ok(fresh_response(&cache, "animelist_all", data))
         }
         Err(err) => {
-            if let Some(cached) = state.cache.get::<Vec<AnimeListEntry>>("animelist_all") {
+            let cache = state.cache.lock().await;
+            if let Some(cached) = cache.get::<Vec<AnimeListEntry>>("animelist_all") {
                 let _ = app.emit(
                     "animelist-load-progress",
                     AnimelistLoadProgress {
@@ -345,7 +514,7 @@ pub async fn get_user_animelist_all(
                     },
                 );
                 Ok(cached_response(
-                    &state.cache,
+                    &cache,
                     "animelist_all",
                     ANIMELIST_CACHE_TTL_SECS,
                     cached,
@@ -357,12 +526,16 @@ pub async fn get_user_animelist_all(
     }
 }
 
-fn invalidate_list_caches(state: &State<'_, AppState>) {
-    let _ = state.cache.delete("animelist_all");
-    let _ = state.cache.delete("continue_watching");
-    let _ = state.cache.delete("suggestions");
-    let _ = state.cache.delete("airing_calendar");
-    let _ = state.cache.delete("home_feed");
+async fn invalidate_list_caches(state: &State<'_, AppState>, anime_id: Option<u64>) {
+    let cache = state.cache.lock().await;
+    let _ = cache.delete("animelist_all");
+    let _ = cache.delete("continue_watching");
+    let _ = cache.delete("suggestions");
+    let _ = cache.delete("airing_calendar");
+    let _ = cache.delete("home_feed");
+    if let Some(id) = anime_id {
+        let _ = cache.delete(&format!("anime_detail_{id}"));
+    }
 }
 
 #[tauri::command]
@@ -387,7 +560,8 @@ pub async fn update_user_profile(
     let profile = MalClient::update_user_profile(&token, &update)
         .await
         .map_err(|e| e.to_string())?;
-    let _ = state.cache.set("user_profile", &profile);
+    let cache = state.cache.lock().await;
+    let _ = cache.set("user_profile", &profile);
     Ok(profile)
 }
 
@@ -403,7 +577,10 @@ pub async fn get_suggestions(
         force_refresh.unwrap_or(false),
         || async {
             let token = get_token(&state).await?;
-            let cached_list: Option<Vec<AnimeListEntry>> = state.cache.get("animelist_all");
+            let cached_list: Option<Vec<AnimeListEntry>> = {
+                let cache = state.cache.lock().await;
+                cache.get("animelist_all")
+            };
             if let Some(list) = cached_list {
                 return compute_suggestions_from_list(&token, &list)
                     .await
@@ -438,17 +615,34 @@ pub async fn update_anime_list_status(
         }
     }
 
+    if final_status.as_deref() == Some("completed") {
+        if let Some(total) = total_episodes {
+            if total > 0 {
+                final_episodes = Some(total);
+            }
+        }
+    }
+
     let update = UpdateListStatusRequest {
         status: final_status,
         score,
         num_watched_episodes: final_episodes,
     };
 
+    if update.status.is_none()
+        && update.score.is_none()
+        && update.num_watched_episodes.is_none()
+    {
+        return Err(
+            "Nessun dato da aggiornare. Seleziona uno stato o modifica episodi/voto.".to_string(),
+        );
+    }
+
     let result = MalClient::update_list_status(&token, anime_id, &update)
         .await
         .map_err(|e| e.to_string())?;
 
-    invalidate_list_caches(&state);
+    invalidate_list_caches(&state, Some(anime_id)).await;
 
     Ok(result)
 }
@@ -466,8 +660,9 @@ pub async fn get_airing_calendar(
         force_refresh.unwrap_or(false),
         || async {
             let token = get_token(&state).await?;
-            let list = state.cache.get::<Vec<AnimeListEntry>>("animelist_all");
-            build_airing_calendar(&state.cache, &token, list)
+            let cache = state.cache.lock().await;
+            let list = cache.get::<Vec<AnimeListEntry>>("animelist_all");
+            build_airing_calendar(&cache, &token, list)
                 .await
                 .map_err(|e| e.to_string())
         },
@@ -494,15 +689,19 @@ pub async fn get_home_feed(
         force_refresh.unwrap_or(false),
         || async {
             let token = get_token(&state).await?;
-            let list = if let Some(cached) = state.cache.get::<Vec<AnimeListEntry>>("animelist_all")
-            {
+            let list = {
+                let cache = state.cache.lock().await;
+                cache.get::<Vec<AnimeListEntry>>("animelist_all")
+            };
+            let list = if let Some(cached) = list {
                 cached
             } else {
                 MalClient::fetch_all_user_animelist(&token)
                     .await
                     .map_err(|e| e.to_string())?
             };
-            build_home_feed(&state.cache, &token, &list)
+            let cache = state.cache.lock().await;
+            build_home_feed(&cache, &token, &list)
                 .await
                 .map_err(|e| e.to_string())
         },
@@ -524,7 +723,11 @@ pub async fn get_continue_watching(
         HOME_FEED_CACHE_TTL_SECS,
         force_refresh.unwrap_or(false),
         || async {
-            if let Some(list) = state.cache.get::<Vec<AnimeListEntry>>("animelist_all") {
+            let cached_list = {
+                let cache = state.cache.lock().await;
+                cache.get::<Vec<AnimeListEntry>>("animelist_all")
+            };
+            if let Some(list) = cached_list {
                 let watching: Vec<AnimeListEntry> = list
                     .into_iter()
                     .filter(|entry| {

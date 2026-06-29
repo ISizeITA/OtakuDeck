@@ -6,6 +6,7 @@ import {
   type RefObject,
   type ReactNode,
 } from "react";
+import { useTranslation } from "@/context/SettingsContext";
 import "@/styles/components/pull-to-refresh.css";
 
 const THRESHOLD = 72;
@@ -14,7 +15,8 @@ const MAX_PULL = 120;
 interface PullToRefreshProps {
   enabled: boolean;
   containerRef: RefObject<HTMLElement | null>;
-  onRefresh: () => Promise<void> | void;
+  onRefresh: () => Promise<void>;
+  refreshing?: boolean;
   children: ReactNode;
 }
 
@@ -22,14 +24,15 @@ export function PullToRefresh({
   enabled,
   containerRef,
   onRefresh,
+  refreshing = false,
   children,
 }: PullToRefreshProps) {
+  const { t } = useTranslation();
   const [pull, setPull] = useState(0);
-  const [refreshing, setRefreshing] = useState(false);
   const startY = useRef(0);
   const pulling = useRef(false);
   const pullRef = useRef(0);
-  const refreshingRef = useRef(false);
+  const busyRef = useRef(false);
   const onRefreshRef = useRef(onRefresh);
 
   useEffect(() => {
@@ -37,7 +40,7 @@ export function PullToRefresh({
   }, [pull]);
 
   useEffect(() => {
-    refreshingRef.current = refreshing;
+    busyRef.current = refreshing;
   }, [refreshing]);
 
   useEffect(() => {
@@ -55,13 +58,13 @@ export function PullToRefresh({
     };
 
     const onTouchStart = (event: TouchEvent) => {
-      if (refreshingRef.current || el.scrollTop > 0) return;
+      if (busyRef.current || el.scrollTop > 0) return;
       startY.current = event.touches[0]?.clientY ?? 0;
       pulling.current = true;
     };
 
     const onTouchMove = (event: TouchEvent) => {
-      if (!pulling.current || refreshingRef.current) return;
+      if (!pulling.current || busyRef.current) return;
 
       if (el.scrollTop > 0) {
         resetPull();
@@ -83,16 +86,9 @@ export function PullToRefresh({
       pulling.current = false;
 
       const currentPull = pullRef.current;
-      if (currentPull >= THRESHOLD && !refreshingRef.current) {
-        setRefreshing(true);
-        void (async () => {
-          try {
-            await onRefreshRef.current();
-          } finally {
-            setRefreshing(false);
-            setPull(0);
-          }
-        })();
+      if (currentPull >= THRESHOLD && !busyRef.current) {
+        setPull(0);
+        void onRefreshRef.current();
         return;
       }
 
@@ -124,13 +120,21 @@ export function PullToRefresh({
     >
       <div
         className={`pull-to-refresh__indicator ${refreshing ? "pull-to-refresh__indicator--active" : ""}`}
-        style={{ height: refreshing ? 48 : pull, opacity: progress }}
+        style={{ height: refreshing ? 48 : pull, opacity: refreshing ? 1 : progress }}
         aria-hidden="true"
       >
         <span
           className={`pill-button__spinner ${refreshing ? "pull-to-refresh__spinner--spin" : ""}`}
           style={{ transform: refreshing ? undefined : `rotate(${progress * 360}deg)` }}
         />
+        {!refreshing && pull > 24 && (
+          <span className="pull-to-refresh__label">
+            {pull >= THRESHOLD ? t("common.releaseToRefresh") : t("common.pullToRefresh")}
+          </span>
+        )}
+        {refreshing && (
+          <span className="pull-to-refresh__label">{t("common.refreshing")}</span>
+        )}
       </div>
       {children}
     </div>

@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimeGrid } from "@/components/AnimeGrid";
+import { CacheStatusBar } from "@/components/CacheStatusBar";
 import { FilterChips } from "@/components/FilterChips";
+import { NewEpisodeBadge } from "@/components/NewEpisodeBadge";
 import { OfflineBanner } from "@/components/OfflineBanner";
 import { TabPills } from "@/components/TabPills";
 import { useAnimeModal } from "@/context/AnimeModalContext";
@@ -10,7 +12,7 @@ import { useMalLabels } from "@/hooks/useMalLabels";
 import { api } from "@/lib/api";
 import { getLocalDayKey, formatBroadcastDisplay, isBroadcastDayToday } from "@/lib/broadcastTime";
 import { cacheExpiryFromResponse } from "@/lib/cacheExpiry";
-import { formatMalSyncTime } from "@/lib/malSync";
+import { hasNewEpisodeFromCalendar } from "@/lib/newEpisode";
 import "@/styles/components/calendar.css";
 import type { AiringCalendarEntry, AnimeNode, ListStatus } from "@/types/mal";
 import { getCoverUrl, getCurrentSeason } from "@/types/mal";
@@ -43,7 +45,8 @@ export function CalendarPage() {
   const { t, locale } = useTranslation();
   const { listStatus } = useMalLabels();
   const { openAnime } = useAnimeModal();
-  const { refreshKey } = useRefresh();
+  const { refreshKey, isRefreshing } = useRefresh();
+  const prevRefreshKey = useRef(refreshKey);
   const [view, setView] = useState<CalendarView>("schedule");
   const [statusFilters, setStatusFilters] = useState<Set<CalendarStatusFilter>>(
     () => new Set(STATUS_FILTERS),
@@ -92,7 +95,9 @@ export function CalendarPage() {
   }, []);
 
   useEffect(() => {
-    void load(refreshKey > 0);
+    const forceRefresh = refreshKey > prevRefreshKey.current;
+    prevRefreshKey.current = refreshKey;
+    void load(forceRefresh);
   }, [load, refreshKey]);
 
   useEffect(() => {
@@ -177,12 +182,13 @@ export function CalendarPage() {
 
   return (
     <div className="page">
+      <CacheStatusBar
+        fromCache={offline}
+        cachedAt={cachedAt}
+        cacheExpiresAt={cacheExpiresAt}
+        loading={isRefreshing || (loading && entries.length > 0)}
+      />
       <OfflineBanner visible={offline} expiresAt={cacheExpiresAt} />
-      {cachedAt && (
-        <p className="page__sync-hint">
-          {t("common.lastMalSync", { time: formatMalSyncTime(cachedAt, locale) })}
-        </p>
-      )}
       {error && <p className="page__error">{error}</p>}
 
       <header className="calendar-header">
@@ -257,6 +263,7 @@ export function CalendarPage() {
                                 {listStatus(entry.list_status as ListStatus)}
                               </span>
                             )}
+                            {hasNewEpisodeFromCalendar(entry) && <NewEpisodeBadge />}
                           </span>
                           <span className="calendar-item__meta">
                             {entry.broadcast_time && (

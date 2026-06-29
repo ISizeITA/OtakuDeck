@@ -30,6 +30,33 @@
   border-bottom: 1px solid var(--color-border);
 }
 
+.global-search__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.global-search__filter {
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-input);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  transition:
+    color var(--transition-fast),
+    border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.global-search__filter--active {
+  color: var(--color-text-primary);
+  border-color: var(--color-accent-border);
+  background: var(--gradient-accent-subtle);
+}
+
 .global-search__icon {
   flex-shrink: 0;
   width: 20px;
